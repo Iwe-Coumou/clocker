@@ -1,4 +1,6 @@
-# Clocker (self-hosted)
+# Timecard (self-hosted)
+
+> **Note:** This was a quick practical tool built entirely with Claude (Anthropic's AI) — not hand-coded. It works, but treat it accordingly if you're evaluating it as a code sample or handing it off to someone else.
 
 A small timecard for tracking hours against a weekly-hours contract (default 8h/week). Log sessions as you work — same-day sessions are automatically added together — and see your current week's progress, days logged, and history of past weeks.
 
