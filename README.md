@@ -1,4 +1,4 @@
-# Timecard (self-hosted)
+# Clocker (self-hosted)
 
 A small timecard for tracking hours against a weekly-hours contract (default 8h/week). Log sessions as you work — same-day sessions are automatically added together — and see your current week's progress, days logged, and history of past weeks.
 
