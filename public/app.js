@@ -1,0 +1,659 @@
+(() => {
+  'use strict';
+
+  const DOW_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // ---------- State ----------
+  // Source of truth lives server-side (a JSON file on the Docker volume).
+  // The client keeps a local copy for rendering and refreshes it from
+  // whatever the API returns after every mutation.
+
+  let entries = [];
+  let settings = { weeklyTarget: 8, weekStart: 1 };
+  let activeShift = null; // { startedAt, date, note, runningSince, accumulatedMs } | null
+  let ledgerRange = 'week'; // 'week' | 'all'
+  let openDays = new Set();
+
+  const connBanner = document.getElementById('connBanner');
+  let reconnectTimer = null;
+
+  function setConnected(ok){
+    connBanner.hidden = ok;
+    if (!ok){
+      scheduleReconnectCheck();
+    } else if (reconnectTimer){
+      clearInterval(reconnectTimer);
+      reconnectTimer = null;
+    }
+  }
+
+  function scheduleReconnectCheck(){
+    if (reconnectTimer) return; // already polling
+    reconnectTimer = setInterval(async () => {
+      try{
+        const state = await apiCall('/api/state');
+        applyState(state); // sets connected true, which clears this interval
+        renderAll();
+      }catch(e){
+        // still down — keep polling silently, no need to spam the user
+      }
+    }, 3000);
+  }
+
+  function applyState(state){
+    entries = Array.isArray(state.entries) ? state.entries : [];
+    settings = Object.assign(settings, state.settings || {});
+    activeShift = state.activeShift || null;
+    setConnected(true);
+    renderShift();
+  }
+
+  async function apiCall(path, options){
+    const res = await fetch(path, Object.assign({
+      headers: { 'Content-Type': 'application/json' }
+    }, options));
+    if (!res.ok){
+      let msg = `Request failed (${res.status})`;
+      try{ const body = await res.json(); if (body && body.error) msg = body.error; }catch(e){}
+      throw new Error(msg);
+    }
+    return res.json();
+  }
+
+  function delay(ms){
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Retries a few times before giving up — smooths over the container still
+  // finishing startup when the page loads for the very first time.
+  async function loadState(retries = 5, gapMs = 700){
+    for (let attempt = 0; attempt < retries; attempt++){
+      try{
+        const state = await apiCall('/api/state');
+        applyState(state);
+        return;
+      }catch(e){
+        if (attempt === retries - 1){
+          setConnected(false);
+          throw e;
+        }
+        await delay(gapMs);
+      }
+    }
+  }
+
+  // ---------- Date helpers (local, no timezone drift) ----------
+
+  function todayStr(){
+    const d = new Date();
+    return toDateStr(d);
+  }
+  function toDateStr(d){
+    const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  }
+  function parseDateStr(s){
+    const [y,m,d] = s.split('-').map(Number);
+    return new Date(y, m-1, d);
+  }
+  function addDays(d, n){
+    const nd = new Date(d);
+    nd.setDate(nd.getDate()+n);
+    return nd;
+  }
+  function startOfWeek(dateStr){
+    const d = parseDateStr(dateStr);
+    const dow = d.getDay(); // 0=Sun..6=Sat
+    const ws = settings.weekStart; // 0 or 1
+    const diff = (dow - ws + 7) % 7;
+    return addDays(d, -diff);
+  }
+  function fmtDayLabel(dateStr){
+    const d = parseDateStr(dateStr);
+    return `${d.getDate()} ${MONTH_SHORT[d.getMonth()]}`;
+  }
+  function fmtDow(dateStr){
+    return DOW_SHORT[parseDateStr(dateStr).getDay()];
+  }
+  function fmtHours(h){
+    if (Math.abs(h - Math.round(h)) < 0.01) return `${Math.round(h)}h`;
+    return `${(Math.round(h*4)/4).toFixed(2).replace(/0$/,'').replace(/\.$/,'')}h`;
+  }
+  function fmtHoursSigned(h){
+    const sign = h > 0 ? '+' : (h < 0 ? '\u2212' : '');
+    return sign + fmtHours(Math.abs(h));
+  }
+
+  // ---------- Aggregation ----------
+
+  function entriesByDay(){
+    const map = new Map();
+    for (const e of entries){
+      if (!map.has(e.date)) map.set(e.date, []);
+      map.get(e.date).push(e);
+    }
+    return map;
+  }
+
+  function dayTotal(dateStr, byDay){
+    const list = byDay.get(dateStr);
+    if (!list) return 0;
+    return list.reduce((s,e) => s + e.hours, 0);
+  }
+
+  function weekKeyOf(dateStr){
+    return toDateStr(startOfWeek(dateStr));
+  }
+
+  function weekTotal(weekStartStr, byDay){
+    const start = parseDateStr(weekStartStr);
+    let total = 0, daysLogged = 0;
+    for (let i=0;i<7;i++){
+      const ds = toDateStr(addDays(start,i));
+      const t = dayTotal(ds, byDay);
+      if (t > 0) daysLogged++;
+      total += t;
+    }
+    return { total, daysLogged };
+  }
+
+  // ---------- CRUD ----------
+
+  async function addEntry(dateStr, hours, note){
+    try{
+      const state = await apiCall('/api/entries', {
+        method: 'POST',
+        body: JSON.stringify({ date: dateStr, hours, note: note || '' })
+      });
+      applyState(state);
+      renderAll();
+    }catch(e){
+      setConnected(false);
+      window.alert('Could not save that entry: ' + e.message);
+    }
+  }
+
+  async function deleteEntry(id){
+    try{
+      const state = await apiCall('/api/entries/' + encodeURIComponent(id), { method: 'DELETE' });
+      applyState(state);
+      renderAll();
+    }catch(e){
+      setConnected(false);
+      window.alert('Could not delete that entry: ' + e.message);
+    }
+  }
+
+  // ---------- Rendering ----------
+
+  function renderAll(){
+    const byDay = entriesByDay();
+    renderHero(byDay);
+    renderShift();
+    renderLedger(byDay);
+    renderHistory(byDay);
+  }
+
+  // ---------- Live shift ----------
+
+  function shiftElapsedMs(shift){
+    if (!shift) return 0;
+    return shift.accumulatedMs + (shift.runningSince ? (Date.now() - shift.runningSince) : 0);
+  }
+
+  function fmtClock(ms){
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(h)}:${pad(m)}:${pad(s)}`;
+  }
+
+  function renderShift(){
+    const clockEl = document.getElementById('shiftClock');
+    const statusEl = document.getElementById('shiftStatus');
+    const startBtn = document.getElementById('shiftStartBtn');
+    const pauseBtn = document.getElementById('shiftPauseBtn');
+    const resumeBtn = document.getElementById('shiftResumeBtn');
+    const endBtn = document.getElementById('shiftEndBtn');
+    const cancelBtn = document.getElementById('shiftCancelBtn');
+    const noteInput = document.getElementById('shiftNoteInput');
+    const dateBadge = document.getElementById('shiftDateBadge');
+
+    clockEl.textContent = fmtClock(shiftElapsedMs(activeShift));
+
+    if (!activeShift){
+      statusEl.textContent = 'Not running';
+      clockEl.classList.remove('is-running', 'is-paused');
+      startBtn.hidden = false;
+      pauseBtn.hidden = true;
+      resumeBtn.hidden = true;
+      endBtn.hidden = true;
+      cancelBtn.hidden = true;
+      noteInput.disabled = false;
+      dateBadge.hidden = true;
+      return;
+    }
+
+    dateBadge.hidden = false;
+    dateBadge.textContent = 'started ' + fmtDayLabel(activeShift.date);
+    noteInput.disabled = true;
+    if (!noteInput.value) noteInput.value = activeShift.note || '';
+    startBtn.hidden = true;
+    cancelBtn.hidden = false;
+
+    if (activeShift.runningSince){
+      statusEl.textContent = 'Running';
+      clockEl.classList.add('is-running');
+      clockEl.classList.remove('is-paused');
+      pauseBtn.hidden = false;
+      resumeBtn.hidden = true;
+      endBtn.hidden = false;
+    } else {
+      statusEl.textContent = 'Paused';
+      clockEl.classList.add('is-paused');
+      clockEl.classList.remove('is-running');
+      pauseBtn.hidden = true;
+      resumeBtn.hidden = false;
+      endBtn.hidden = false;
+    }
+  }
+
+  // Ticks the visible clock every second between server round-trips; harmless
+  // no-op while no shift is running.
+  setInterval(() => {
+    if (activeShift && activeShift.runningSince){
+      document.getElementById('shiftClock').textContent = fmtClock(shiftElapsedMs(activeShift));
+    }
+  }, 1000);
+
+  function renderHero(byDay){
+    const today = todayStr();
+    const wkStart = startOfWeek(today);
+    const wkStartStr = toDateStr(wkStart);
+    const { total, daysLogged } = weekTotal(wkStartStr, byDay);
+    const target = settings.weeklyTarget;
+
+    document.getElementById('weekTotal').textContent = (Math.round(total*100)/100).toString();
+    const remaining = target - total;
+    const sub = document.getElementById('weekSub');
+    if (remaining > 0){
+      sub.textContent = `of ${fmtHours(target)} this week \u00b7 ${fmtHours(remaining)} left`;
+    } else if (remaining === 0){
+      sub.textContent = `of ${fmtHours(target)} this week \u00b7 quota met exactly`;
+    } else {
+      sub.textContent = `of ${fmtHours(target)} this week \u00b7 ${fmtHoursSigned(remaining)} over`;
+    }
+
+    const wkEnd = addDays(wkStart, 6);
+    document.getElementById('weekRangeLabel').textContent =
+      `${fmtDayLabel(toDateStr(wkStart))} \u2013 ${fmtDayLabel(toDateStr(wkEnd))}`;
+    document.getElementById('daysLoggedLabel').textContent = `${daysLogged} / 7`;
+
+    const statusEl = document.getElementById('statusLabel');
+    if (total >= target && target > 0){
+      statusEl.textContent = 'Quota met';
+      statusEl.style.color = 'var(--teal)';
+    } else if (total > 0){
+      statusEl.textContent = 'In progress';
+      statusEl.style.color = 'var(--brass-bright)';
+    } else {
+      statusEl.textContent = 'Not started';
+      statusEl.style.color = 'var(--paper-dim)';
+    }
+
+    drawPunchStrip(total, target);
+  }
+
+  function drawPunchStrip(total, target){
+    const svg = document.getElementById('punchStrip');
+    const segCount = Math.max(1, Math.round(target) || 1);
+    const segHours = target / segCount;
+    const vbW = 640, vbH = 100;
+    const gap = 8;
+    const segW = (vbW - gap*(segCount-1)) / segCount;
+    const segH = 56;
+    const y = (vbH - segH) / 2;
+
+    let svgParts = [];
+    for (let i=0;i<segCount;i++){
+      const x = i * (segW + gap);
+      const segStart = i * segHours;
+      const fillFrac = Math.max(0, Math.min(1, (total - segStart) / segHours));
+      const isOver = total > target && i === segCount - 1;
+
+      svgParts.push(`<rect x="${x}" y="${y}" width="${segW}" height="${segH}" rx="6" fill="none" stroke="rgba(236,231,219,0.22)" stroke-width="1.5"/>`);
+      if (fillFrac > 0){
+        const fillColor = total > target ? '#c0524a' : '#c8993f';
+        svgParts.push(`<rect x="${x}" y="${y}" width="${segW*fillFrac}" height="${segH}" rx="6" fill="${fillColor}"/>`);
+      }
+    }
+    svg.innerHTML = svgParts.join('');
+  }
+
+  function renderLedger(byDay){
+    const container = document.getElementById('ledgerList');
+    const emptyEl = document.getElementById('ledgerEmpty');
+    container.innerHTML = '';
+
+    let dates = Array.from(byDay.keys()).sort().reverse();
+
+    if (ledgerRange === 'week'){
+      const wkStartStr = toDateStr(startOfWeek(todayStr()));
+      const wkStart = parseDateStr(wkStartStr);
+      const validSet = new Set();
+      for (let i=0;i<7;i++) validSet.add(toDateStr(addDays(wkStart,i)));
+      dates = dates.filter(d => validSet.has(d));
+    }
+
+    emptyEl.hidden = dates.length > 0;
+    if (dates.length === 0) return;
+
+    for (const dateStr of dates){
+      const sessions = byDay.get(dateStr).slice().sort((a,b) => (a.createdAt||0) - (b.createdAt||0));
+      const total = sessions.reduce((s,e) => s+e.hours, 0);
+
+      const row = document.createElement('div');
+      row.className = 'day-row' + (openDays.has(dateStr) ? ' is-open' : '');
+
+      const head = document.createElement('button');
+      head.type = 'button';
+      head.className = 'day-row-head';
+      head.innerHTML = `
+        <span class="day-left">
+          <span class="day-date">${fmtDayLabel(dateStr)}${dateStr === todayStr() ? ' \u00b7 today' : ''}</span>
+          <span class="day-dow">${fmtDow(dateStr)}</span>
+        </span>
+        <span class="day-right">
+          <span class="day-total">${fmtHours(total)}</span>
+          <span class="day-caret">\u25b8</span>
+        </span>`;
+      head.addEventListener('click', () => {
+        if (openDays.has(dateStr)) openDays.delete(dateStr); else openDays.add(dateStr);
+        row.classList.toggle('is-open');
+      });
+
+      const sessionsWrap = document.createElement('div');
+      sessionsWrap.className = 'day-sessions';
+      for (const s of sessions){
+        const item = document.createElement('div');
+        item.className = 'session-item';
+        item.innerHTML = `
+          <span class="session-info">
+            <span class="session-dur">${fmtHours(s.hours)}</span>
+            <span class="session-note">${escapeHtml(s.note || '')}</span>
+          </span>
+          <button class="session-del" type="button" aria-label="Delete session">\u2715</button>`;
+        item.querySelector('.session-del').addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          deleteEntry(s.id);
+        });
+        sessionsWrap.appendChild(item);
+      }
+
+      row.appendChild(head);
+      row.appendChild(sessionsWrap);
+      container.appendChild(row);
+    }
+  }
+
+  function renderHistory(byDay){
+    const target = settings.weeklyTarget;
+    const today = todayStr();
+    const currentWkKey = toDateStr(startOfWeek(today));
+
+    const weekKeys = new Set();
+    for (const dateStr of byDay.keys()) weekKeys.add(weekKeyOf(dateStr));
+    weekKeys.add(currentWkKey);
+
+    let weeks = Array.from(weekKeys).sort().reverse().slice(0, 8);
+    const weekData = weeks.map(wk => {
+      const { total, daysLogged } = weekTotal(wk, byDay);
+      return { wk, total, daysLogged };
+    });
+
+    const chart = document.getElementById('historyChart');
+    const table = document.getElementById('historyTable');
+    chart.innerHTML = '';
+    table.innerHTML = '';
+
+    const maxVal = Math.max(target, ...weekData.map(w => w.total), 1);
+    const chartOrder = weekData.slice().reverse(); // oldest -> newest, left to right
+
+    for (const w of chartOrder){
+      const pct = Math.max(2, (w.total / maxVal) * 100);
+      const isCurrent = w.wk === currentWkKey;
+      const isOver = w.total > target;
+      const col = document.createElement('div');
+      col.className = 'hbar-col';
+      const start = parseDateStr(w.wk);
+      col.innerHTML = `
+        <div class="hbar-track"><div class="hbar ${isOver ? 'is-over' : (isCurrent ? 'is-current' : '')}" style="height:${pct}%"></div></div>
+        <div class="hbar-label">${MONTH_SHORT[start.getMonth()]} ${start.getDate()}</div>`;
+      chart.appendChild(col);
+    }
+
+    for (const w of weekData){
+      const start = parseDateStr(w.wk);
+      const end = addDays(start, 6);
+      const diff = w.total - target;
+      const row = document.createElement('div');
+      row.className = 'hist-row';
+      const totalClass = diff > 0 ? 'is-over' : (diff === 0 ? 'is-met' : '');
+      row.innerHTML = `
+        <span class="hist-range">${fmtDayLabel(toDateStr(start))} \u2013 ${fmtDayLabel(toDateStr(end))}${w.wk === currentWkKey ? ' (current)' : ''}</span>
+        <span class="hist-total ${totalClass}">${fmtHours(w.total)}${diff !== 0 ? ` <span style="opacity:.7;font-weight:400">(${fmtHoursSigned(diff)})</span>` : ''}</span>`;
+      table.appendChild(row);
+    }
+  }
+
+  function escapeHtml(str){
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // ---------- Form wiring ----------
+
+  const dateInput = document.getElementById('dateInput');
+  const hoursInput = document.getElementById('hoursInput');
+  const minutesInput = document.getElementById('minutesInput');
+  const noteInput = document.getElementById('noteInput');
+  const entryForm = document.getElementById('entryForm');
+
+  dateInput.value = todayStr();
+  dateInput.max = todayStr();
+
+  entryForm.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const dateStr = dateInput.value || todayStr();
+    const h = parseInt(hoursInput.value, 10) || 0;
+    const m = parseInt(minutesInput.value, 10) || 0;
+    const totalHours = h + m/60;
+    if (totalHours <= 0){
+      hoursInput.focus();
+      return;
+    }
+    addEntry(dateStr, Math.round(totalHours*100)/100, noteInput.value.trim());
+    hoursInput.value = '0';
+    minutesInput.value = '0';
+    noteInput.value = '';
+    hoursInput.focus();
+  });
+
+  document.getElementById('quickChips').addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.chip');
+    if (!btn) return;
+    const mins = parseInt(btn.dataset.mins, 10);
+    addEntry(todayStr(), Math.round((mins/60)*100)/100, '');
+  });
+
+  // ---------- Live shift buttons ----------
+
+  const shiftNoteInput = document.getElementById('shiftNoteInput');
+
+  document.getElementById('shiftStartBtn').addEventListener('click', async () => {
+    const note = shiftNoteInput.value.trim();
+    try{
+      const state = await apiCall('/api/shift/start', {
+        method: 'POST',
+        body: JSON.stringify({ date: todayStr(), note })
+      });
+      applyState(state);
+    }catch(e){
+      window.alert('Could not start the shift: ' + e.message);
+    }
+  });
+
+  document.getElementById('shiftPauseBtn').addEventListener('click', async () => {
+    try{
+      const state = await apiCall('/api/shift/pause', { method: 'POST' });
+      applyState(state);
+    }catch(e){
+      window.alert('Could not pause: ' + e.message);
+    }
+  });
+
+  document.getElementById('shiftResumeBtn').addEventListener('click', async () => {
+    try{
+      const state = await apiCall('/api/shift/resume', { method: 'POST' });
+      applyState(state);
+    }catch(e){
+      window.alert('Could not resume: ' + e.message);
+    }
+  });
+
+  document.getElementById('shiftEndBtn').addEventListener('click', async () => {
+    try{
+      const state = await apiCall('/api/shift/end', { method: 'POST' });
+      applyState(state);
+      shiftNoteInput.value = '';
+      renderAll(); // new entry needs to show up in the ledger/history/week total
+    }catch(e){
+      window.alert('Could not end the shift: ' + e.message);
+    }
+  });
+
+  document.getElementById('shiftCancelBtn').addEventListener('click', async () => {
+    const proceed = window.confirm('Discard this shift without logging any time?');
+    if (!proceed) return;
+    try{
+      const state = await apiCall('/api/shift/cancel', { method: 'POST' });
+      applyState(state);
+      shiftNoteInput.value = '';
+    }catch(e){
+      window.alert('Could not discard the shift: ' + e.message);
+    }
+  });
+
+  document.querySelectorAll('.toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      ledgerRange = btn.dataset.range;
+      renderLedger(entriesByDay());
+    });
+  });
+
+  // ---------- Settings dialog ----------
+
+  const settingsDialog = document.getElementById('settingsDialog');
+  const weeklyTargetInput = document.getElementById('weeklyTargetInput');
+  const weekStartInput = document.getElementById('weekStartInput');
+
+  document.getElementById('settingsBtn').addEventListener('click', () => {
+    weeklyTargetInput.value = settings.weeklyTarget;
+    weekStartInput.value = String(settings.weekStart);
+    settingsDialog.showModal();
+  });
+
+  settingsDialog.addEventListener('close', async () => {
+    const t = parseFloat(weeklyTargetInput.value);
+    const weeklyTarget = (!isNaN(t) && t > 0) ? t : settings.weeklyTarget;
+    const weekStart = parseInt(weekStartInput.value, 10) === 0 ? 0 : 1;
+    try{
+      const state = await apiCall('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ weeklyTarget, weekStart })
+      });
+      applyState(state);
+      renderAll();
+    }catch(e){
+      setConnected(false);
+      window.alert('Could not save settings: ' + e.message);
+    }
+  });
+
+  document.getElementById('exportBtn').addEventListener('click', () => {
+    // Downloads straight from the server so the backup always reflects
+    // what's actually persisted on disk.
+    const a = document.createElement('a');
+    a.href = '/api/export';
+    a.download = `timecard-backup-${todayStr()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+
+  document.getElementById('importInput').addEventListener('change', (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try{
+        const data = JSON.parse(reader.result);
+        if (!Array.isArray(data.entries)) throw new Error('Invalid file');
+        const proceed = window.confirm(
+          `This backup contains ${data.entries.length} entries. Importing will replace all data currently stored on the server. Continue?`
+        );
+        if (!proceed) return;
+        const state = await apiCall('/api/import', {
+          method: 'POST',
+          body: JSON.stringify({ entries: data.entries, settings: data.settings })
+        });
+        applyState(state);
+        renderAll();
+        weeklyTargetInput.value = settings.weeklyTarget;
+        weekStartInput.value = String(settings.weekStart);
+      }catch(e){
+        window.alert('Could not import that backup: ' + e.message);
+      }
+      ev.target.value = '';
+    };
+    reader.readAsText(file);
+  });
+
+  document.getElementById('clearAllBtn').addEventListener('click', async () => {
+    const proceed = window.confirm('Erase all logged entries on the server? This cannot be undone. Export a backup first if you want to keep a copy.');
+    if (!proceed) return;
+    try{
+      const state = await apiCall('/api/clear', { method: 'POST' });
+      applyState(state);
+      renderAll();
+    }catch(e){
+      setConnected(false);
+      window.alert('Could not clear entries: ' + e.message);
+    }
+  });
+
+  document.getElementById('connRetryBtn').addEventListener('click', async () => {
+    try{
+      await loadState();
+      renderAll();
+    }catch(e){ /* banner already shown */ }
+  });
+
+  // ---------- Init ----------
+
+  (async () => {
+    try{
+      await loadState();
+    }catch(e){
+      // setConnected(false) already called inside loadState; render with
+      // whatever empty defaults we have so the UI isn't blank.
+    }
+    renderAll();
+  })();
+})();

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timecard — weekly hours ledger</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="wrap">
+
+  <div id="connBanner" class="conn-banner" hidden>
+    Can't reach the server — check that the container is running.
+    <button id="connRetryBtn" type="button">Retry</button>
+  </div>
+
+  <header class="hero">
+    <div class="hero-top">
+      <div class="eyebrow">Timecard</div>
+      <button id="settingsBtn" class="ghost-btn" type="button" aria-haspopup="dialog">Contract &amp; data</button>
+    </div>
+    <h1 class="hero-title">This week's punch</h1>
+
+    <div class="punch-block">
+      <svg id="punchStrip" class="punch-strip" viewBox="0 0 640 100" role="img" aria-label="Progress toward weekly hour quota"></svg>
+      <div class="punch-readout">
+        <div class="readout-main">
+          <span id="weekTotal" class="figure">0.0</span><span class="figure-unit">h logged</span>
+        </div>
+        <div class="readout-sub" id="weekSub">of 8h this week &middot; 8.0h left</div>
+      </div>
+    </div>
+
+    <div class="hero-meta">
+      <div class="meta-item">
+        <span class="meta-label">Week</span>
+        <span class="meta-value" id="weekRangeLabel">—</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Days logged</span>
+        <span class="meta-value" id="daysLoggedLabel">0 / 7</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Status</span>
+        <span class="meta-value" id="statusLabel">—</span>
+      </div>
+    </div>
+  </header>
+
+  <section class="panel shift-panel">
+    <div class="panel-header-row">
+      <h2 class="panel-title">Live shift</h2>
+      <span id="shiftDateBadge" class="shift-date-badge" hidden></span>
+    </div>
+
+    <div class="shift-body">
+      <div class="shift-readout">
+        <span id="shiftClock" class="shift-clock">00:00:00</span>
+        <span id="shiftStatus" class="shift-status">Not running</span>
+      </div>
+
+      <input type="text" id="shiftNoteInput" class="shift-note-input" placeholder="What are you working on? (optional)" maxlength="120">
+
+      <div class="shift-buttons">
+        <button id="shiftStartBtn" class="primary-btn" type="button">Start shift</button>
+        <button id="shiftPauseBtn" class="ghost-btn wide-btn" type="button" hidden>Pause</button>
+        <button id="shiftResumeBtn" class="primary-btn" type="button" hidden>Resume</button>
+        <button id="shiftEndBtn" class="primary-btn end-btn" type="button" hidden>End &amp; log</button>
+        <button id="shiftCancelBtn" class="ghost-btn danger-ghost" type="button" hidden>Discard</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel quick-panel">
+    <h2 class="panel-title">Log time</h2>
+
+    <div class="quick-chips" id="quickChips" role="group" aria-label="Quick add to today">
+      <span class="chip-label">Add to today —</span>
+      <button class="chip" data-mins="15" type="button">+15m</button>
+      <button class="chip" data-mins="30" type="button">+30m</button>
+      <button class="chip" data-mins="60" type="button">+1h</button>
+      <button class="chip" data-mins="120" type="button">+2h</button>
+    </div>
+
+    <form id="entryForm" class="entry-form">
+      <div class="field">
+        <label for="dateInput">Date</label>
+        <input type="date" id="dateInput" required>
+      </div>
+      <div class="field field-duration">
+        <label for="hoursInput">Duration</label>
+        <div class="duration-inputs">
+          <input type="number" id="hoursInput" min="0" max="24" step="1" value="0" inputmode="numeric" aria-label="Hours">
+          <span class="duration-unit">h</span>
+          <select id="minutesInput" aria-label="Minutes">
+            <option value="0">00</option>
+            <option value="15">15</option>
+            <option value="30">30</option>
+            <option value="45">45</option>
+          </select>
+          <span class="duration-unit">m</span>
+        </div>
+      </div>
+      <div class="field field-note">
+        <label for="noteInput">Note <span class="optional">(optional)</span></label>
+        <input type="text" id="noteInput" placeholder="e.g. client call, bug triage" maxlength="120">
+      </div>
+      <button type="submit" class="primary-btn">Add entry</button>
+    </form>
+    <p class="form-hint">Pick any past date to log a missed day — sessions on the same day are added together automatically.</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header-row">
+      <h2 class="panel-title">Day ledger</h2>
+      <div class="panel-toggle" role="group" aria-label="Ledger range">
+        <button class="toggle-btn is-active" data-range="week" type="button">This week</button>
+        <button class="toggle-btn" data-range="all" type="button">All time</button>
+      </div>
+    </div>
+    <div id="ledgerList" class="ledger-list"></div>
+    <p id="ledgerEmpty" class="empty-state" hidden>No hours logged yet — add your first session above.</p>
+  </section>
+
+  <section class="panel">
+    <h2 class="panel-title">Week history</h2>
+    <div id="historyChart" class="history-chart"></div>
+    <div id="historyTable" class="history-table"></div>
+  </section>
+
+</div>
+
+<dialog id="settingsDialog" class="settings-dialog">
+  <form method="dialog" class="settings-form">
+    <h2>Contract &amp; data</h2>
+
+    <label class="settings-field">
+      Weekly contracted hours
+      <input type="number" id="weeklyTargetInput" min="1" max="80" step="0.5">
+    </label>
+
+    <label class="settings-field">
+      Week starts on
+      <select id="weekStartInput">
+        <option value="1">Monday</option>
+        <option value="0">Sunday</option>
+      </select>
+    </label>
+
+    <div class="settings-divider"></div>
+
+    <p class="settings-note">Entries are stored server-side in a JSON file on the Docker volume, so they persist across browsers, devices, and container restarts. Still worth exporting a backup occasionally.</p>
+
+    <div class="settings-actions">
+      <button type="button" id="exportBtn" class="ghost-btn">Export backup (.json)</button>
+      <label class="ghost-btn file-btn">
+        Import backup
+        <input type="file" id="importInput" accept="application/json" hidden>
+      </label>
+    </div>
+
+    <div class="settings-divider"></div>
+    <button type="button" id="clearAllBtn" class="danger-btn">Erase all entries</button>
+
+    <div class="settings-close-row">
+      <button type="submit" class="primary-btn">Done</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

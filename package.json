@@ -1,0 +1,13 @@
+{
+  "name": "timecard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted weekly hours timecard with persistent file-backed storage.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
