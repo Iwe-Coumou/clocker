@@ -1,4 +1,4 @@
-# Timecard (self-hosted)
+# Clocker (self-hosted)
 
 > **Note:** This was a quick practical tool built entirely with Claude (Anthropic's AI) — not hand-coded. It works, but treat it accordingly if you're evaluating it as a code sample or handing it off to someone else.
 
