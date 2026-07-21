@@ -11,9 +11,11 @@
 
   let entries = [];
   let settings = { weeklyTarget: 8, weekStart: 1 };
-  let activeShift = null; // { startedAt, date, note, runningSince, accumulatedMs } | null
+  // { date, note, running, elapsedMs, receivedAt } | null — see applyState.
+  let activeShift = null;
   let ledgerRange = 'week'; // 'week' | 'all'
   let openDays = new Set();
+  let editingId = null; // entry id currently open for inline editing
 
   const connBanner = document.getElementById('connBanner');
   let reconnectTimer = null;
@@ -44,7 +46,13 @@
   function applyState(state){
     entries = Array.isArray(state.entries) ? state.entries : [];
     settings = Object.assign(settings, state.settings || {});
-    activeShift = state.activeShift || null;
+    // The server sends elapsed duration rather than a start timestamp, and we
+    // stamp arrival with our own clock. Every subsequent tick is then a delta
+    // between two readings of the *same* clock, so a device whose time is off
+    // from the host's still shows the correct elapsed time.
+    activeShift = state.activeShift
+      ? Object.assign({}, state.activeShift, { receivedAt: Date.now() })
+      : null;
     setConnected(true);
     renderShift();
   }
@@ -116,13 +124,24 @@
   function fmtDow(dateStr){
     return DOW_SHORT[parseDateStr(dateStr).getDay()];
   }
-  function fmtHours(h){
-    if (Math.abs(h - Math.round(h)) < 0.01) return `${Math.round(h)}h`;
-    return `${(Math.round(h*4)/4).toFixed(2).replace(/0$/,'').replace(/\.$/,'')}h`;
+  // Durations are stored as decimal hours but always shown as H:MM. Decimal
+  // hours are unreadable at a glance (0.42h) and rounding them to something
+  // readable loses real minutes — a 25 minute session is not half an hour.
+  function fmtHM(h){
+    const totalMin = Math.round(h * 60);
+    const hh = Math.floor(totalMin / 60);
+    const mm = totalMin % 60;
+    return `${hh}:${String(mm).padStart(2, '0')}`;
   }
-  function fmtHoursSigned(h){
+  // Wall-clock time of an absolute timestamp, in the viewer's locale — so a
+  // 24h locale gets 14:05 and a 12h one gets 2:05 PM.
+  function fmtTimeOfDay(ms){
+    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function fmtHMSigned(h){
     const sign = h > 0 ? '+' : (h < 0 ? '\u2212' : '');
-    return sign + fmtHours(Math.abs(h));
+    return sign + fmtHM(Math.abs(h));
   }
 
   // ---------- Aggregation ----------
@@ -174,6 +193,24 @@
     }
   }
 
+  async function updateEntry(id, fields){
+    try{
+      const state = await apiCall('/api/entries/' + encodeURIComponent(id), {
+        method: 'PATCH',
+        body: JSON.stringify(fields)
+      });
+      editingId = null;
+      // A changed date moves the entry to a different day — make sure that
+      // day is expanded so the edit doesn't look like it vanished.
+      openDays.add(fields.date);
+      applyState(state);
+      renderAll();
+    }catch(e){
+      setConnected(false);
+      window.alert('Could not save that change: ' + e.message);
+    }
+  }
+
   async function deleteEntry(id){
     try{
       const state = await apiCall('/api/entries/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -199,7 +236,7 @@
 
   function shiftElapsedMs(shift){
     if (!shift) return 0;
-    return shift.accumulatedMs + (shift.runningSince ? (Date.now() - shift.runningSince) : 0);
+    return shift.elapsedMs + (shift.running ? (Date.now() - shift.receivedAt) : 0);
   }
 
   function fmtClock(ms){
@@ -238,13 +275,15 @@
     }
 
     dateBadge.hidden = false;
-    dateBadge.textContent = 'started ' + fmtDayLabel(activeShift.date);
+    dateBadge.textContent = activeShift.startedAt
+      ? `started ${fmtDayLabel(activeShift.date)}, ${fmtTimeOfDay(activeShift.startedAt)}`
+      : 'started ' + fmtDayLabel(activeShift.date);
     noteInput.disabled = true;
     if (!noteInput.value) noteInput.value = activeShift.note || '';
     startBtn.hidden = true;
     cancelBtn.hidden = false;
 
-    if (activeShift.runningSince){
+    if (activeShift.running){
       statusEl.textContent = 'Running';
       clockEl.classList.add('is-running');
       clockEl.classList.remove('is-paused');
@@ -264,7 +303,7 @@
   // Ticks the visible clock every second between server round-trips; harmless
   // no-op while no shift is running.
   setInterval(() => {
-    if (activeShift && activeShift.runningSince){
+    if (activeShift && activeShift.running){
       document.getElementById('shiftClock').textContent = fmtClock(shiftElapsedMs(activeShift));
     }
   }, 1000);
@@ -276,15 +315,15 @@
     const { total, daysLogged } = weekTotal(wkStartStr, byDay);
     const target = settings.weeklyTarget;
 
-    document.getElementById('weekTotal').textContent = (Math.round(total*100)/100).toString();
+    document.getElementById('weekTotal').textContent = fmtHM(total);
     const remaining = target - total;
     const sub = document.getElementById('weekSub');
     if (remaining > 0){
-      sub.textContent = `of ${fmtHours(target)} this week \u00b7 ${fmtHours(remaining)} left`;
+      sub.textContent = `of ${fmtHM(target)} this week \u00b7 ${fmtHM(remaining)} left`;
     } else if (remaining === 0){
-      sub.textContent = `of ${fmtHours(target)} this week \u00b7 quota met exactly`;
+      sub.textContent = `of ${fmtHM(target)} this week \u00b7 quota met exactly`;
     } else {
-      sub.textContent = `of ${fmtHours(target)} this week \u00b7 ${fmtHoursSigned(remaining)} over`;
+      sub.textContent = `of ${fmtHM(target)} this week \u00b7 ${fmtHMSigned(remaining)} over`;
     }
 
     const wkEnd = addDays(wkStart, 6);
@@ -322,7 +361,6 @@
       const x = i * (segW + gap);
       const segStart = i * segHours;
       const fillFrac = Math.max(0, Math.min(1, (total - segStart) / segHours));
-      const isOver = total > target && i === segCount - 1;
 
       svgParts.push(`<rect x="${x}" y="${y}" width="${segW}" height="${segH}" rx="6" fill="none" stroke="rgba(236,231,219,0.22)" stroke-width="1.5"/>`);
       if (fillFrac > 0){
@@ -367,7 +405,7 @@
           <span class="day-dow">${fmtDow(dateStr)}</span>
         </span>
         <span class="day-right">
-          <span class="day-total">${fmtHours(total)}</span>
+          <span class="day-total">${fmtHM(total)}</span>
           <span class="day-caret">\u25b8</span>
         </span>`;
       head.addEventListener('click', () => {
@@ -378,25 +416,107 @@
       const sessionsWrap = document.createElement('div');
       sessionsWrap.className = 'day-sessions';
       for (const s of sessions){
-        const item = document.createElement('div');
-        item.className = 'session-item';
-        item.innerHTML = `
-          <span class="session-info">
-            <span class="session-dur">${fmtHours(s.hours)}</span>
-            <span class="session-note">${escapeHtml(s.note || '')}</span>
-          </span>
-          <button class="session-del" type="button" aria-label="Delete session">\u2715</button>`;
-        item.querySelector('.session-del').addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          deleteEntry(s.id);
-        });
-        sessionsWrap.appendChild(item);
+        sessionsWrap.appendChild(s.id === editingId ? buildSessionEditor(s) : buildSessionRow(s));
       }
 
       row.appendChild(head);
       row.appendChild(sessionsWrap);
       container.appendChild(row);
     }
+  }
+
+  // ---------- Session rows (display + inline edit) ----------
+
+  function splitHours(hours){
+    let h = Math.floor(hours);
+    let m = Math.round((hours - h) * 60);
+    if (m === 60){ h += 1; m = 0; } // e.g. 1.999h rounds up into the next hour
+    return { h, m };
+  }
+
+  // Only stopwatch entries carry start/end times; ones typed into the form
+  // have nothing to report, so the line is omitted entirely rather than
+  // padded with placeholders.
+  function sessionTimesHtml(s){
+    if (!s.startedAt || !s.endedAt) return '';
+    const span = `${fmtTimeOfDay(s.startedAt)} – ${fmtTimeOfDay(s.endedAt)}`;
+    // Sub-minute pauses round to "0m", which is noise — treat them as none.
+    const paused = (s.pausedMs && s.pausedMs >= 60000)
+      ? ` · paused ${fmtHM(s.pausedMs / 3600000)}`
+      : '';
+    return `<span class="session-times">${span}${paused}</span>`;
+  }
+
+  function buildSessionRow(s){
+    const item = document.createElement('div');
+    item.className = 'session-item';
+    item.innerHTML = `
+      <span class="session-info">
+        <span class="session-line">
+          <span class="session-dur">${fmtHM(s.hours)}</span>
+          <span class="session-note">${escapeHtml(s.note || '')}</span>
+        </span>
+        ${sessionTimesHtml(s)}
+      </span>
+      <span class="session-actions">
+        <button class="session-btn session-edit" type="button" aria-label="Edit session">✎</button>
+        <button class="session-btn session-del" type="button" aria-label="Delete session">✕</button>
+      </span>`;
+
+    item.querySelector('.session-edit').addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      editingId = s.id;
+      openDays.add(s.date); // keep the day expanded around the open editor
+      renderLedger(entriesByDay());
+    });
+    item.querySelector('.session-del').addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      deleteEntry(s.id);
+    });
+    return item;
+  }
+
+  function buildSessionEditor(s){
+    const { h, m } = splitHours(s.hours);
+    const form = document.createElement('form');
+    form.className = 'session-item session-editor';
+    form.innerHTML = `
+      <div class="editor-grid">
+        <input type="date" class="edit-date" value="${s.date}" required aria-label="Date">
+        <span class="editor-duration">
+          <input type="number" class="edit-hours" min="0" max="24" step="1" value="${h}" inputmode="numeric" aria-label="Hours">
+          <span class="duration-unit">h</span>
+          <input type="number" class="edit-mins" min="0" max="59" step="1" value="${m}" inputmode="numeric" aria-label="Minutes">
+          <span class="duration-unit">m</span>
+        </span>
+      </div>
+      <input type="text" class="edit-note" value="${escapeHtml(s.note || '')}" placeholder="Note (optional)" maxlength="120" aria-label="Note">
+      <div class="editor-actions">
+        <button type="submit" class="editor-save">Save</button>
+        <button type="button" class="editor-cancel">Cancel</button>
+      </div>`;
+
+    form.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const hours = (parseInt(form.querySelector('.edit-hours').value, 10) || 0)
+        + (parseInt(form.querySelector('.edit-mins').value, 10) || 0) / 60;
+      if (hours <= 0){
+        form.querySelector('.edit-hours').focus();
+        return;
+      }
+      updateEntry(s.id, {
+        date: form.querySelector('.edit-date').value || s.date,
+        hours: Math.round(hours * 100) / 100,
+        note: form.querySelector('.edit-note').value.trim()
+      });
+    });
+
+    form.querySelector('.editor-cancel').addEventListener('click', () => {
+      editingId = null;
+      renderLedger(entriesByDay());
+    });
+
+    return form;
   }
 
   function renderHistory(byDay){
@@ -444,7 +564,7 @@
       const totalClass = diff > 0 ? 'is-over' : (diff === 0 ? 'is-met' : '');
       row.innerHTML = `
         <span class="hist-range">${fmtDayLabel(toDateStr(start))} \u2013 ${fmtDayLabel(toDateStr(end))}${w.wk === currentWkKey ? ' (current)' : ''}</span>
-        <span class="hist-total ${totalClass}">${fmtHours(w.total)}${diff !== 0 ? ` <span style="opacity:.7;font-weight:400">(${fmtHoursSigned(diff)})</span>` : ''}</span>`;
+        <span class="hist-total ${totalClass}">${fmtHM(w.total)}${diff !== 0 ? ` <span style="opacity:.7;font-weight:400">(${fmtHMSigned(diff)})</span>` : ''}</span>`;
       table.appendChild(row);
     }
   }
@@ -586,15 +706,23 @@
     }
   });
 
-  document.getElementById('exportBtn').addEventListener('click', () => {
-    // Downloads straight from the server so the backup always reflects
-    // what's actually persisted on disk.
+  // Downloads come straight from the server so they always reflect what's
+  // actually persisted on disk, not the browser's copy.
+  function download(url, filename){
     const a = document.createElement('a');
-    a.href = '/api/export';
-    a.download = `timecard-backup-${todayStr()}.json`;
+    a.href = url;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
+  }
+
+  document.getElementById('exportBtn').addEventListener('click', () => {
+    download('/api/export', `clocker-backup-${todayStr()}.json`);
+  });
+
+  document.getElementById('exportCsvBtn').addEventListener('click', () => {
+    download('/api/export.csv', `clocker-${todayStr()}.csv`);
   });
 
   document.getElementById('importInput').addEventListener('change', (ev) => {

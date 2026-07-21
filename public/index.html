@@ -21,7 +21,7 @@
 
   <header class="hero">
     <div class="hero-top">
-      <div class="eyebrow">Timecard</div>
+      <div class="eyebrow">Clocker</div>
       <button id="settingsBtn" class="ghost-btn" type="button" aria-haspopup="dialog">Contract &amp; data</button>
     </div>
     <h1 class="hero-title">This week's punch</h1>
@@ -30,9 +30,9 @@
       <svg id="punchStrip" class="punch-strip" viewBox="0 0 640 100" role="img" aria-label="Progress toward weekly hour quota"></svg>
       <div class="punch-readout">
         <div class="readout-main">
-          <span id="weekTotal" class="figure">0.0</span><span class="figure-unit">h logged</span>
+          <span id="weekTotal" class="figure">0:00</span><span class="figure-unit">logged</span>
         </div>
-        <div class="readout-sub" id="weekSub">of 8h this week &middot; 8.0h left</div>
+        <div class="readout-sub" id="weekSub">of 8:00 this week &middot; 8:00 left</div>
       </div>
     </div>
 
@@ -97,12 +97,7 @@
         <div class="duration-inputs">
           <input type="number" id="hoursInput" min="0" max="24" step="1" value="0" inputmode="numeric" aria-label="Hours">
           <span class="duration-unit">h</span>
-          <select id="minutesInput" aria-label="Minutes">
-            <option value="0">00</option>
-            <option value="15">15</option>
-            <option value="30">30</option>
-            <option value="45">45</option>
-          </select>
+          <input type="number" id="minutesInput" min="0" max="59" step="1" value="0" inputmode="numeric" aria-label="Minutes">
           <span class="duration-unit">m</span>
         </div>
       </div>
@@ -162,7 +157,9 @@
         Import backup
         <input type="file" id="importInput" accept="application/json" hidden>
       </label>
+      <button type="button" id="exportCsvBtn" class="ghost-btn">Export sheet (.csv)</button>
     </div>
+    <p class="settings-note">The .json backup is what Import reads back. The .csv is for spreadsheets and invoicing — it can't be imported.</p>
 
     <div class="settings-divider"></div>
     <button type="button" id="clearAllBtn" class="danger-btn">Erase all entries</button>

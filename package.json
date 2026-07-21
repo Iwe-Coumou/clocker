@@ -1,11 +1,12 @@
 {
-  "name": "timecard",
-  "version": "1.0.0",
+  "name": "clocker",
+  "version": "1.2.0",
   "private": true,
   "description": "Self-hosted weekly hours timecard with persistent file-backed storage.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
     "express": "^4.19.2"

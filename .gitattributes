@@ -1,0 +1,3 @@
+# The entrypoint runs inside a Linux container — CRLF would make the shebang
+# unparseable, so keep it LF regardless of the host's autocrlf setting.
+*.sh text eol=lf

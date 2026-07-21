@@ -1,16 +1,19 @@
 services:
-  timecard:
+  clocker:
     build: .
-    container_name: timecard
+    image: clocker
+    container_name: clocker
     ports:
-      - "8080:3000"
+      # Host port only — the app keeps listening on 3000 inside the container,
+      # so nothing else has to change when you move it.
+      - "${CLOCKER_PORT:-8090}:3000"
     environment:
-      - DATA_FILE=/data/timecard.json
+      - DATA_FILE=/data/clocker.json
       - AUTH_USER=${AUTH_USER:-}
       - AUTH_PASS=${AUTH_PASS:-}
     volumes:
-      - timecard-data:/data
+      - clocker-data:/data
     restart: unless-stopped
 
 volumes:
-  timecard-data:
+  clocker-data:

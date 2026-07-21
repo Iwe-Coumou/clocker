@@ -371,10 +371,6 @@ input::-webkit-calendar-picker-indicator{ filter:invert(0.85); }
   font-family:var(--font-mono);
   text-align:center;
 }
-.duration-inputs select{
-  font-family:var(--font-mono);
-  padding:10px 8px;
-}
 .duration-unit{ color:var(--paper-dim); font-size:13px; }
 
 input:focus-visible, select:focus-visible, button:focus-visible{
@@ -497,7 +493,13 @@ input:focus-visible, select:focus-visible, button:focus-visible{
   font-size:13px;
 }
 
-.session-info{ display:flex; align-items:center; gap:10px; min-width:0; }
+.session-info{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  min-width:0;
+}
+.session-line{ display:flex; align-items:center; gap:10px; min-width:0; }
 .session-dur{
   font-family:var(--font-mono);
   color:var(--paper);
@@ -510,16 +512,86 @@ input:focus-visible, select:focus-visible, button:focus-visible{
   white-space:nowrap;
 }
 
-.session-del{
+/* Only present on stopwatch entries — secondary to the duration above it. */
+.session-times{
+  font-family:var(--font-mono);
+  font-size:11.5px;
+  color:var(--paper-dim);
+  opacity:0.8;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.session-actions{ display:flex; align-items:center; gap:2px; flex-shrink:0; }
+
+.session-btn{
   background:transparent;
   border:none;
   color:var(--paper-dim);
   cursor:pointer;
   font-size:15px;
   padding:2px 6px;
-  flex-shrink:0;
+  line-height:1;
 }
+.session-edit:hover{ color:var(--brass-bright); }
 .session-del:hover{ color:var(--rust); }
+
+/* Inline entry editor — replaces the session row in place so the ledger
+   doesn't reflow around a modal. */
+.session-editor{
+  flex-direction:column;
+  align-items:stretch;
+  gap:8px;
+  border:1px solid rgba(200,153,63,0.35);
+}
+
+.editor-grid{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+}
+
+.editor-duration{ display:flex; align-items:center; gap:5px; }
+
+.session-editor input[type="date"],
+.session-editor input[type="text"],
+.session-editor input[type="number"]{
+  background:var(--ink-800);
+  border:1px solid var(--line);
+  border-radius:7px;
+  padding:7px 9px;
+  font-size:13px;
+}
+.session-editor input[type="number"]{
+  width:56px;
+  font-family:var(--font-mono);
+  text-align:center;
+}
+.session-editor .edit-note{ width:100%; }
+
+.editor-actions{ display:flex; gap:8px; }
+
+.editor-save, .editor-cancel{
+  border-radius:7px;
+  padding:7px 14px;
+  font-size:12.5px;
+  cursor:pointer;
+}
+.editor-save{
+  background:var(--brass);
+  color:#1a1405;
+  border:none;
+  font-weight:600;
+}
+.editor-save:hover{ background:var(--brass-bright); }
+.editor-cancel{
+  background:transparent;
+  border:1px solid var(--line);
+  color:var(--paper-dim);
+}
+.editor-cancel:hover{ border-color:var(--paper-dim); color:var(--paper); }
 
 .empty-state{
   color:var(--paper-dim);
