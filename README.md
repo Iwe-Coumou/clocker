@@ -1,6 +1,6 @@
 # Clocker (self-hosted)
 
-> **Note:** This was a quick practical tool built entirely with Claude (Anthropic's AI) — not hand-coded. It works, but treat it accordingly if you're evaluating it as a code sample or handing it off to someone else.
+> **Note:** The idea, features, and design decisions here are mine; the code itself was written entirely by Claude (Anthropic's AI) from my instructions — I didn't hand-write any of it. It's a quick practical tool and it works, but treat it accordingly if you're evaluating it as a code sample or handing it off to someone else.
 
 A small time tracker for logging hours against a weekly-hours contract (default 8h/week). Log sessions as you work — same-day sessions are automatically added together — and see your current week's progress, days logged, and history of past weeks.
 
@@ -273,3 +273,8 @@ Fine for a five-minute look; use the one-liner or Compose for anything you keep.
 - Colors, type, and layout live in `public/style.css`.
 - Change the exposed host port by setting `CLOCKER_PORT` in `.env` (e.g. `CLOCKER_PORT=9000`), then `docker compose up -d`. It defaults to 8090. Only the host side changes — the app always listens on 3000 inside the container, so a published image doesn't need rebuilding to move ports.
 - Require a login by setting `AUTH_USER`/`AUTH_PASS` in `.env` — see "Requiring a login" above.
+
+## Changelog
+
+- **1.2.1** — Durations are stored as whole minutes rather than on a finer grid, fixing weekly totals that drifted when an entry was edited (a one-minute edit could move a total by two). Existing entries are rounded to the nearest minute on first start after upgrading. The CSV export gains an exact `minutes` column, between `hours` and `note`.
+- **1.2.0** — Live shift stopwatch with pause/resume, day ledger with inline editing, week history chart, JSON/CSV export and import, optional HTTP Basic Auth, and the rename from Timecard (with automatic data migration).
