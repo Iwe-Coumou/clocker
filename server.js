@@ -32,6 +32,24 @@ function ensureDataDir() {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
+// ---------- Duration granularity ----------
+// The minute is the unit of this app: it's what the forms accept, what the
+// editor shows and what every total is rendered in. Durations are therefore
+// snapped to a whole number of minutes before they are stored, so the stored
+// value is exactly the one the user sees.
+//
+// The alternative — storing a finer value and rounding only on display — makes
+// totals lie. Hours used to be kept to 2 decimals, a 36 second grid: an entry
+// of 4.23h read back as "4h 14m", and saving it one minute longer wrote 4.25h,
+// growing it by 1.2 minutes. A week of 7.99h then jumped from "7:59" to "8:01"
+// on a one minute edit. Whole minutes in, whole minutes out, no drift.
+//
+// Note the result is a full precision double (5 minutes is 0.08333…h), not a
+// rounded decimal — rounding *that* would put the residue straight back.
+function quantizeHours(hours) {
+  return Math.round(hours * 60) / 60;
+}
+
 function loadState() {
   ensureDataDir();
 
@@ -79,9 +97,31 @@ function persist() {
   return writeQueue;
 }
 
+// Entries written before durations were snapped to whole minutes sit on the
+// old 36 second grid, so their totals keep drifting until they're squared up.
+// Rounding each to its nearest minute moves any one entry by at most 30
+// seconds and leaves the displayed H:MM alone.
+function normalizeStoredHours() {
+  let changed = 0;
+  for (const entry of state.entries) {
+    if (!Number.isFinite(entry.hours)) continue;
+    const snapped = quantizeHours(entry.hours);
+    if (snapped !== entry.hours) {
+      entry.hours = snapped;
+      changed++;
+    }
+  }
+  return changed;
+}
+
+const renormalized = normalizeStoredHours();
+if (renormalized > 0) {
+  console.log(`Rounded ${renormalized} entr${renormalized === 1 ? 'y' : 'ies'} to whole minutes.`);
+}
+
 // Complete a legacy migration eagerly rather than waiting for the user's next
 // edit, so the new file exists from the first boot onward.
-if (!fs.existsSync(DATA_FILE) && fs.existsSync(LEGACY_DATA_FILE)) persist();
+if (renormalized > 0 || (!fs.existsSync(DATA_FILE) && fs.existsSync(LEGACY_DATA_FILE))) persist();
 
 // ---------- Auth ----------
 // Optional HTTP Basic Auth, enabled only when both AUTH_USER and AUTH_PASS
@@ -136,7 +176,7 @@ function validEntry(body) {
   const hours = Number(body.hours);
   if (!Number.isFinite(hours) || hours <= 0 || hours > 24) return null;
   const note = typeof body.note === 'string' ? body.note.slice(0, 200) : '';
-  return { date: body.date, hours: Math.round(hours * 100) / 100, note };
+  return { date: body.date, hours: quantizeHours(hours), note };
 }
 
 // ---------- Live shift stopwatch ----------
@@ -272,7 +312,9 @@ app.post('/api/shift/end', async (req, res) => {
 
   const endedAt = Date.now();
   const totalMs = shiftElapsedMs(shift);
-  const hours = Math.min(24, Math.round((totalMs / 3600000) * 100) / 100);
+  // The stopwatch counts seconds, but a logged entry is whole minutes like
+  // every other one — a shift is rounded to the nearest minute as it lands.
+  const hours = Math.min(24, quantizeHours(totalMs / 3600000));
   // Paused time needs no separate bookkeeping: whatever wall-clock time the
   // shift spanned but didn't bank as worked time is, by definition, paused.
   const pausedMs = Math.max(0, endedAt - shift.startedAt - totalMs);
@@ -370,7 +412,10 @@ function csvCell(value) {
 }
 
 app.get('/api/export.csv', (req, res) => {
-  const rows = [['date', 'hours', 'note', 'started_at', 'ended_at', 'paused_minutes', 'logged_at']];
+  // Whole minutes are what's actually stored; the decimal hours beside them are
+  // a convenience for invoicing and are rounded to 2 places, so a column of
+  // them can be a hair off the column of minutes. Sum the minutes to be exact.
+  const rows = [['date', 'hours', 'minutes', 'note', 'started_at', 'ended_at', 'paused_minutes', 'logged_at']];
   const sorted = state.entries.slice().sort((a, b) => (a.date === b.date
     ? (a.createdAt || 0) - (b.createdAt || 0)
     : a.date.localeCompare(b.date)));
@@ -378,7 +423,8 @@ app.get('/api/export.csv', (req, res) => {
   for (const e of sorted) {
     rows.push([
       e.date,
-      e.hours,
+      Number(e.hours.toFixed(2)),
+      Math.round(e.hours * 60),
       e.note || '',
       // Blank on hand-typed entries rather than faked — an empty cell reads
       // correctly in a spreadsheet as "not measured".

@@ -96,13 +96,17 @@ This is fine for personal use behind Tailscale/your LAN. If you ever expose the 
 - **Week history**: a small bar chart plus a table of your last several weeks, each flagged as over/under/on target.
 - **Contract & data** (top-right button): change your weekly hour target or which day the week starts on, export a JSON backup, import a backup, export a CSV sheet, or erase everything.
 
-Two export formats, for two different jobs: **Export backup (.json)** is the one **Import backup** reads back, so use it to move or restore data. **Export sheet (.csv)** is a flat `date, hours, note, started_at, ended_at, paused_minutes, logged_at` table for a spreadsheet or an invoice — it can't be imported.
+Two export formats, for two different jobs: **Export backup (.json)** is the one **Import backup** reads back, so use it to move or restore data. **Export sheet (.csv)** is a flat `date, hours, minutes, note, started_at, ended_at, paused_minutes, logged_at` table for a spreadsheet or an invoice — it can't be imported.
 
 ### How durations are shown
 
+**The minute is the unit.** It's what the forms accept, what the editor shows, and what every total is rendered in — so durations are snapped to a whole number of minutes on the way in, and a total never shows a minute that isn't in the data. Ending a stopwatch shift rounds it to the nearest minute; the seconds on the running clock are there to watch, not to bank.
+
 Every duration in the UI is **H:MM** — `0:25`, `1:07`, `7:45`. Hours are stored internally as decimals (`0.41`), but decimal hours are hard to read at a glance and rounding them to something readable throws away real minutes: 25 minutes is not half an hour, and 5 minutes is not zero.
 
-The one place decimals remain is the **CSV export**, where the `hours` column stays decimal so a spreadsheet can sum and multiply it directly. The `paused_minutes` column is whole minutes for the same reason.
+The one place decimals remain is the **CSV export**, where the `hours` column stays decimal so a spreadsheet can sum and multiply it directly. It's rounded to 2 places for readability, so sum the exact `minutes` column beside it if the pennies matter. `paused_minutes` is whole minutes for the same reason.
+
+Entries logged by an older version sat on a finer 36-second grid, which made edits drift — adding one minute could move a weekly total by two. They're rounded to their nearest minute (at most a 30-second move each) the first time the server starts after this change, and the rounded values are written back to the data file.
 
 If the app can't reach the server (e.g. the container isn't running), a banner appears at the top. It retries automatically in the background and clears itself once the server responds — no need to refresh manually.
 
@@ -128,7 +132,7 @@ The container starts as root only long enough to `chown` the data volume, then r
 
 ## Tests
 
-There's one smoke test covering the endpoints that touch stored data — shifts, entry add/edit/delete, CSV escaping, concurrent writes, and survival across a restart. It boots the real server against a throwaway data file, so the persistence path is exercised for real.
+There's one smoke test covering the endpoints that touch stored data — shifts, entry add/edit/delete, minute rounding, CSV escaping, concurrent writes, and survival across a restart. It boots the real server against a throwaway data file, so the persistence path is exercised for real.
 
 ```
 npm install
@@ -170,7 +174,7 @@ Local builds are single-architecture — building on an Intel/AMD machine produc
 docker login
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t <your-dockerhub-user>/clocker:1.2.0 \
+  -t <your-dockerhub-user>/clocker:1.2.1 \
   -t <your-dockerhub-user>/clocker:latest \
   --push .
 ```
@@ -188,7 +192,7 @@ Consumers don't need this repo — only a compose file:
 ```yaml
 services:
   clocker:
-    image: <your-dockerhub-user>/clocker:1.2.0
+    image: <your-dockerhub-user>/clocker:1.2.1
     container_name: clocker
     ports:
       - "${CLOCKER_PORT:-8090}:3000"

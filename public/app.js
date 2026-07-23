@@ -127,6 +127,10 @@
   // Durations are stored as decimal hours but always shown as H:MM. Decimal
   // hours are unreadable at a glance (0.42h) and rounding them to something
   // readable loses real minutes — a 25 minute session is not half an hour.
+  //
+  // Every stored duration is a whole number of minutes (the server snaps them),
+  // so this rounding only mops up float noise: no total can display a minute
+  // that isn't in the data, and no edit can shift a total by more than it added.
   function fmtHM(h){
     const totalMin = Math.round(h * 60);
     const hh = Math.floor(totalMin / 60);
@@ -430,8 +434,16 @@
   function splitHours(hours){
     let h = Math.floor(hours);
     let m = Math.round((hours - h) * 60);
-    if (m === 60){ h += 1; m = 0; } // e.g. 1.999h rounds up into the next hour
+    if (m === 60){ h += 1; m = 0; } // float noise can push 2h to 1h 60m
     return { h, m };
+  }
+
+  // The inverse of splitHours: the h/m a form collected, as the decimal hours
+  // the API speaks. Deliberately not rounded to a couple of decimals — that
+  // would drop part of a minute, and the editor round-trips through here on
+  // every save, so the loss would compound each time an entry was touched.
+  function hoursFromHM(h, m){
+    return (h * 60 + m) / 60;
   }
 
   // Only stopwatch entries carry start/end times; ones typed into the form
@@ -498,15 +510,17 @@
 
     form.addEventListener('submit', (ev) => {
       ev.preventDefault();
-      const hours = (parseInt(form.querySelector('.edit-hours').value, 10) || 0)
-        + (parseInt(form.querySelector('.edit-mins').value, 10) || 0) / 60;
+      const hours = hoursFromHM(
+        parseInt(form.querySelector('.edit-hours').value, 10) || 0,
+        parseInt(form.querySelector('.edit-mins').value, 10) || 0
+      );
       if (hours <= 0){
         form.querySelector('.edit-hours').focus();
         return;
       }
       updateEntry(s.id, {
         date: form.querySelector('.edit-date').value || s.date,
-        hours: Math.round(hours * 100) / 100,
+        hours,
         note: form.querySelector('.edit-note').value.trim()
       });
     });
@@ -591,12 +605,12 @@
     const dateStr = dateInput.value || todayStr();
     const h = parseInt(hoursInput.value, 10) || 0;
     const m = parseInt(minutesInput.value, 10) || 0;
-    const totalHours = h + m/60;
+    const totalHours = hoursFromHM(h, m);
     if (totalHours <= 0){
       hoursInput.focus();
       return;
     }
-    addEntry(dateStr, Math.round(totalHours*100)/100, noteInput.value.trim());
+    addEntry(dateStr, totalHours, noteInput.value.trim());
     hoursInput.value = '0';
     minutesInput.value = '0';
     noteInput.value = '';
@@ -607,7 +621,7 @@
     const btn = ev.target.closest('.chip');
     if (!btn) return;
     const mins = parseInt(btn.dataset.mins, 10);
-    addEntry(todayStr(), Math.round((mins/60)*100)/100, '');
+    addEntry(todayStr(), hoursFromHM(0, mins), '');
   });
 
   // ---------- Live shift buttons ----------

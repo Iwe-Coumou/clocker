@@ -158,6 +158,78 @@ test('entries can be added, edited and deleted', async () => {
   assert.equal(state.entries.length, 0);
 });
 
+test('a one minute edit moves the total by exactly one minute', async () => {
+  // The regression this guards: hours were stored on a 36 second grid, so an
+  // entry read back as whole minutes and saved a minute longer actually grew
+  // by more than a minute, and a week could jump from 7:59 to 8:01.
+  const minutesOf = (state) => state.entries.reduce((sum, e) => sum + e.hours * 60, 0);
+
+  let state = await api('/api/entries', {
+    method: 'POST',
+    body: JSON.stringify({ date: '2026-07-21', hours: 4.23, note: 'awkward' })
+  });
+  await api('/api/entries', {
+    method: 'POST',
+    body: JSON.stringify({ date: '2026-07-21', hours: 3.76, note: 'also awkward' })
+  });
+
+  state = await api('/api/state');
+  const before = minutesOf(state);
+  assert.equal(before, Math.round(before), 'stored durations are whole minutes');
+
+  // Exactly what the inline editor does: split the entry into h/m, bump the
+  // minutes by one, send it back.
+  const entry = state.entries[0];
+  const h = Math.floor(entry.hours);
+  const m = Math.round((entry.hours - h) * 60);
+  state = await api('/api/entries/' + entry.id, {
+    method: 'PATCH',
+    body: JSON.stringify({ hours: (h * 60 + m + 1) / 60 })
+  });
+
+  assert.equal(minutesOf(state), before + 1);
+});
+
+test('durations stored on the old sub-minute grid are rounded on load', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clocker-grid-'));
+  const file = path.join(dir, 'clocker.json');
+  fs.writeFileSync(file, JSON.stringify({
+    entries: [
+      { id: 'a', date: '2026-07-20', hours: 4.23, note: '' },
+      { id: 'b', date: '2026-07-20', hours: 3.76, note: '' }
+    ],
+    settings: { weeklyTarget: 8, weekStart: 1 }
+  }));
+
+  const port = PORT + 2;
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+    env: Object.assign({}, process.env, { PORT: String(port), DATA_FILE: file }),
+    stdio: 'ignore'
+  });
+
+  try {
+    let state;
+    for (let i = 0; i < 50; i++){
+      try {
+        state = await (await fetch(`http://127.0.0.1:${port}/api/state`)).json();
+        break;
+      } catch (e) { await new Promise((r) => setTimeout(r, 100)); }
+    }
+    for (const e of state.entries){
+      assert.equal(e.hours * 60, Math.round(e.hours * 60), `${e.id} is a whole number of minutes`);
+    }
+    // 4.23h is 253.8 minutes and 3.76h is 225.6 — each moves to its nearest
+    // minute, never further.
+    assert.equal(Math.round(state.entries[0].hours * 60), 254);
+    assert.equal(Math.round(state.entries[1].hours * 60), 226);
+
+    const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(onDisk.entries[0].hours, state.entries[0].hours, 'the rounding is written back, not just served');
+  } finally {
+    proc.kill();
+  }
+});
+
 test('concurrent writes all survive', async () => {
   // The regression this guards: re-reading the file per request meant a
   // second request could load a copy that predated the first request's
@@ -181,10 +253,10 @@ test('csv export escapes quotes and neutralises formulas', async () => {
   });
 
   const csv = await api('/api/export.csv');
-  assert.match(csv, /^"date","hours","note","started_at","ended_at","paused_minutes","logged_at"/);
+  assert.match(csv, /^"date","hours","minutes","note","started_at","ended_at","paused_minutes","logged_at"/);
   assert.match(csv, /"'=cmd\(\)\|""evil"""/);
   // Hand-typed entry: the timing columns are blank, not zero-filled.
-  assert.match(csv, /"2026-07-21","1","'=cmd\(\)\|""evil""","","",""/);
+  assert.match(csv, /"2026-07-21","1","60","'=cmd\(\)\|""evil""","","",""/);
 });
 
 test('data written under the old Timecard name is picked up automatically', async () => {
