@@ -174,8 +174,8 @@ Local builds are single-architecture — building on an Intel/AMD machine produc
 docker login
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t <your-dockerhub-user>/clocker:1.2.1 \
-  -t <your-dockerhub-user>/clocker:latest \
+  -t icoumou/clocker:1.2.1 \
+  -t icoumou/clocker:latest \
   --push .
 ```
 
@@ -187,15 +187,61 @@ Note that a multi-platform build **can't be stored locally** — Docker's image 
 
 ### Running a published image
 
-Consumers don't need this repo — only a compose file:
+Nothing from this repo is needed — not the Dockerfile, not a clone. One command:
+
+```bash
+docker run -d --name clocker \
+  -p 8090:3000 \
+  -v clocker-data:/data \
+  --restart unless-stopped \
+  icoumou/clocker:1.2.1
+```
+
+Then open **http://localhost:8090**. The `clocker-data` volume is created for you on that first run — there's nothing to set up beforehand.
+
+**Give it that `-v` flag.** It's the one part that isn't optional in practice, and skipping it fails in a way that looks fine for weeks. Without it the app still runs, still writes `/data/clocker.json`, and still survives restarts and reboots — but that file lives in the container's own writable layer, and **`docker rm` destroys it**. Updating to a newer image is precisely a `docker rm` plus a fresh `docker run`, so the first update silently takes every logged hour with it.
+
+An image can't solve this for you: a Dockerfile can only declare an *anonymous* volume, which Docker names as a random hash and never reattaches to the next container. The name is what lets a new container find the old ledger, and only the person running it can supply one.
+
+If you've already been running without a volume, you don't have to lose anything — export first, then re-import into the properly mounted container:
+
+1. **Contract & data → Export backup** in the running app.
+2. `docker rm -f clocker`
+3. Run the command above, with the `-v` flag this time.
+4. **Contract & data → Import backup**, and pick the file from step 1.
+
+That's also the manual path for moving a ledger between machines, since each host's volume is its own separate ledger.
+
+#### Setting a login on a pulled image
+
+There's no `.env` inside the image and nothing to edit — pass the credentials in when you create the container:
+
+```bash
+docker run -d --name clocker \
+  -p 8090:3000 \
+  -v clocker-data:/data \
+  -e AUTH_USER=yourname -e AUTH_PASS=something-not-guessable \
+  --restart unless-stopped \
+  icoumou/clocker:1.2.1
+```
+
+Omit both `-e` flags to run with no login. Environment variables are fixed when the container is created, so changing them later means `docker rm -f clocker` and running it again — safe, since the data is in the volume rather than the container.
+
+`--env-file ./clocker.env` works too, with one file of `KEY=value` lines. Note it isn't the same mechanism as Compose's `.env`: lines are passed to the container verbatim, so quoting a value (`AUTH_PASS="x"`) makes the quotes part of the password.
+
+#### Or with Compose
+
+Same thing, but the file remembers the settings for you — worth it for anything you intend to keep running:
 
 ```yaml
 services:
   clocker:
-    image: <your-dockerhub-user>/clocker:1.2.1
+    image: icoumou/clocker:1.2.1
     container_name: clocker
     ports:
-      - "${CLOCKER_PORT:-8090}:3000"
+      # Host side only — change 8090 if it's taken. The app always listens on
+      # 3000 inside the container.
+      - "8090:3000"
     environment:
       - AUTH_USER=${AUTH_USER:-}
       - AUTH_PASS=${AUTH_PASS:-}
@@ -207,7 +253,19 @@ volumes:
   clocker-data:
 ```
 
+Save it as `docker-compose.yml` in an empty folder and run `docker compose up -d`. It works as-is with no login: the `:-` means "empty if unset". To turn auth on, put an `.env` file **next to that compose file** with `AUTH_USER=` / `AUTH_PASS=` lines — Compose reads it on your machine and substitutes the values in, so the credentials never go near the image.
+
 Pin a version rather than `latest` — `latest` changes under people without warning.
+
+#### A note on Docker Desktop's "Run" dialog
+
+Pulling the image and hitting **Run** in the GUI works, but the dialog makes two of the four settings above easy to miss:
+
+- **Host port** left blank gets you a random port, not 8090 — the app is running, just not where you're looking. The container port is 3000.
+- **Volumes** left blank is the data-loss case described above. The Host path field is a bind-mount picker, so for a named volume run `docker volume create clocker-data` first, or just use the command line.
+- There's no restart-policy field at all, so the container won't come back after a reboot.
+
+Fine for a five-minute look; use the one-liner or Compose for anything you keep.
 
 ## Customizing
 
