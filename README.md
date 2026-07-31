@@ -1,5 +1,7 @@
 # Clocker (self-hosted)
 
+[![Latest release](https://img.shields.io/github/v/release/Iwe-Coumou/clocker)](https://github.com/Iwe-Coumou/clocker/releases/latest)
+
 > **Note:** The idea, features, and design decisions here are mine; the code itself was written entirely by Claude (Anthropic's AI) from my instructions — I didn't hand-write any of it. It's a quick practical tool and it works, but treat it accordingly if you're evaluating it as a code sample or handing it off to someone else.
 
 A small time tracker for logging hours against a weekly-hours contract (default 8h/week). Log sessions as you work — same-day sessions are automatically added together — and see your current week's progress, days logged, and history of past weeks.
