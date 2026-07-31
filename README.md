@@ -96,7 +96,9 @@ This is fine for personal use behind Tailscale/your LAN. If you ever expose the 
 - **Week history**: a small bar chart plus a table of your last several weeks, each flagged as over/under/on target.
 - **Contract & data** (top-right button): change your weekly hour target or which day the week starts on, export a JSON backup, import a backup, export a CSV sheet, or erase everything.
 
-Two export formats, for two different jobs: **Export backup (.json)** is the one **Import backup** reads back, so use it to move or restore data. **Export sheet (.csv)** is a flat `date, hours, minutes, note, started_at, ended_at, paused_minutes, logged_at` table for a spreadsheet or an invoice — it can't be imported.
+Two export formats, for two different jobs: **Export backup (.json)** is the one the import buttons read back, so use it to move or restore data. **Export sheet (.csv)** is a flat `date, hours, minutes, note, started_at, ended_at, paused_minutes, logged_at` table for a spreadsheet or an invoice — it can't be imported.
+
+Importing a `.json` backup comes in two modes. **Import (replace)** swaps the whole ledger for the backup's contents — the restore/move path. **Import (merge)** adds the backup's entries to what's already on this server, skipping any it already has (matched by entry id), and leaves the target and week-start untouched. Merge is how you bring a second machine's hours home: run Clocker on a laptop while travelling, export when you're back, and merge that file into your main install. Because the match is by id, merging the same file twice adds nothing the second time.
 
 ### How durations are shown
 
@@ -174,7 +176,7 @@ Local builds are single-architecture — building on an Intel/AMD machine produc
 docker login
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t icoumou/clocker:1.2.1 \
+  -t icoumou/clocker:1.3.0 \
   -t icoumou/clocker:latest \
   --push .
 ```
@@ -194,7 +196,7 @@ docker run -d --name clocker \
   -p 8090:3000 \
   -v clocker-data:/data \
   --restart unless-stopped \
-  icoumou/clocker:1.2.1
+  icoumou/clocker:1.3.0
 ```
 
 Then open **http://localhost:8090**. The `clocker-data` volume is created for you on that first run — there's nothing to set up beforehand.
@@ -222,7 +224,7 @@ docker run -d --name clocker \
   -v clocker-data:/data \
   -e AUTH_USER=yourname -e AUTH_PASS=something-not-guessable \
   --restart unless-stopped \
-  icoumou/clocker:1.2.1
+  icoumou/clocker:1.3.0
 ```
 
 Omit both `-e` flags to run with no login. Environment variables are fixed when the container is created, so changing them later means `docker rm -f clocker` and running it again — safe, since the data is in the volume rather than the container.
@@ -236,7 +238,7 @@ Same thing, but the file remembers the settings for you — worth it for anythin
 ```yaml
 services:
   clocker:
-    image: icoumou/clocker:1.2.1
+    image: icoumou/clocker:1.3.0
     container_name: clocker
     ports:
       # Host side only — change 8090 if it's taken. The app always listens on
@@ -276,5 +278,6 @@ Fine for a five-minute look; use the one-liner or Compose for anything you keep.
 
 ## Changelog
 
+- **1.3.0** — **Merge import**: bring a second machine's hours home without losing what's already here. Contract & data now offers Import (replace) and Import (merge) — merge adds the backup's entries and skips any already present (matched by entry id), so it's safe to repeat and won't touch your target or week-start. A version footer at the bottom of the page links to the source and image.
 - **1.2.1** — Durations are stored as whole minutes rather than on a finer grid, fixing weekly totals that drifted when an entry was edited (a one-minute edit could move a total by two). Existing entries are rounded to the nearest minute on first start after upgrading. The CSV export gains an exact `minutes` column, between `hours` and `note`.
 - **1.2.0** — Live shift stopwatch with pause/resume, day ledger with inline editing, week history chart, JSON/CSV export and import, optional HTTP Basic Auth, and the rename from Timecard (with automatic data migration).

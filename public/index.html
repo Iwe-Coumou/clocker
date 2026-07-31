@@ -128,6 +128,13 @@
     <div id="historyTable" class="history-table"></div>
   </section>
 
+  <footer class="site-footer">
+    <span id="appVersion" class="footer-version"></span>
+    <a href="https://github.com/Iwe-Coumou/clocker" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <span class="footer-sep" aria-hidden="true">&middot;</span>
+    <a href="https://hub.docker.com/r/icoumou/clocker" target="_blank" rel="noopener noreferrer">Docker Hub</a>
+  </footer>
+
 </div>
 
 <dialog id="settingsDialog" class="settings-dialog">
@@ -154,12 +161,16 @@
     <div class="settings-actions">
       <button type="button" id="exportBtn" class="ghost-btn">Export backup (.json)</button>
       <label class="ghost-btn file-btn">
-        Import backup
+        Import (replace)
         <input type="file" id="importInput" accept="application/json" hidden>
+      </label>
+      <label class="ghost-btn file-btn">
+        Import (merge)
+        <input type="file" id="mergeInput" accept="application/json" hidden>
       </label>
       <button type="button" id="exportCsvBtn" class="ghost-btn">Export sheet (.csv)</button>
     </div>
-    <p class="settings-note">The .json backup is what Import reads back. The .csv is for spreadsheets and invoicing — it can't be imported.</p>
+    <p class="settings-note"><strong>Replace</strong> swaps all data on this server for the backup's. <strong>Merge</strong> adds the backup's entries to what's here, skipping any already present — use it to bring hours back from another machine. The .csv is for spreadsheets and invoicing; it can't be imported.</p>
 
     <div class="settings-divider"></div>
     <button type="button" id="clearAllBtn" class="danger-btn">Erase all entries</button>

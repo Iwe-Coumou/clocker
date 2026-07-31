@@ -8,6 +8,16 @@ const crypto = require('crypto');
 const PORT = process.env.PORT || 3000;
 const DATA_FILE = process.env.DATA_FILE || '/data/clocker.json';
 
+// Read once at boot so the footer can show which build is running. Falls back
+// to empty rather than crashing if package.json is ever missing or unreadable.
+const APP_VERSION = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version || '';
+  } catch (e) {
+    return '';
+  }
+})();
+
 // The project was called Timecard before it was renamed to Clocker, and the
 // data file was named to match. Installs that predate the rename still have
 // their hours in timecard.json, so it's read once as a fallback — see
@@ -196,6 +206,7 @@ function shiftElapsedMs(shift) {
 // device whose clock is off by minutes; a plain elapsed duration is not.
 function publicState() {
   return {
+    version: APP_VERSION,
     entries: state.entries,
     settings: state.settings,
     activeShift: state.activeShift
@@ -354,16 +365,46 @@ app.put('/api/settings', async (req, res) => {
   res.json(publicState());
 });
 
+// Two ways to bring a backup in:
+//  - replace (default): the file becomes the whole ledger, as it always has.
+//  - merge: the file's entries are added to what's already here. This is how a
+//    second machine's hours come home — run the app on a laptop for a while,
+//    export, then merge that export into the main install.
+//
+// Merge dedupes on the entry id, which is a UUID minted once when the entry is
+// created and preserved through every export/import. So an entry the target
+// already holds is skipped rather than doubled, which makes a merge safe to
+// repeat and safe to run with overlapping backups. Content is deliberately not
+// used to match: two sessions with the same date, hours and note are a real
+// pattern (the app sums same-day sessions), not a duplicate.
 app.post('/api/import', async (req, res) => {
   const body = req.body || {};
   if (!Array.isArray(body.entries)) return res.status(400).json({ error: 'Invalid backup file: missing entries array.' });
+  const merge = body.mode === 'merge';
 
-  const cleanEntries = [];
+  // In merge mode the current entries stay and their ids are already taken;
+  // in replace mode we start from empty.
+  const cleanEntries = merge ? state.entries.slice() : [];
+  const seenIds = new Set(cleanEntries.map((e) => e.id));
+  let added = 0;
+  let skipped = 0;
+
   for (const e of body.entries) {
     const parsed = validEntry(e);
     if (!parsed) continue;
+
+    // A merge skips any entry we already hold by id — that's the dedupe. In
+    // replace mode the set only guards against a single file listing one id
+    // twice, which would otherwise create two entries sharing an id.
+    if (typeof e.id === 'string' && e.id && seenIds.has(e.id)) {
+      skipped++;
+      continue;
+    }
+
+    const id = (typeof e.id === 'string' && e.id && !seenIds.has(e.id)) ? e.id : crypto.randomUUID();
+    seenIds.add(id);
     const entry = {
-      id: (typeof e.id === 'string' && e.id) ? e.id : crypto.randomUUID(),
+      id,
       date: parsed.date,
       hours: parsed.hours,
       note: parsed.note,
@@ -375,17 +416,23 @@ app.post('/api/import', async (req, res) => {
     if (Number.isFinite(e.endedAt)) entry.endedAt = e.endedAt;
     if (Number.isFinite(e.pausedMs)) entry.pausedMs = e.pausedMs;
     cleanEntries.push(entry);
+    added++;
   }
 
   state.entries = cleanEntries;
-  if (body.settings) {
+  // A merge is additive by nature: it shouldn't quietly reset the target or
+  // week-start on the machine it's merged into. Only a replace adopts the
+  // backup's settings.
+  if (!merge && body.settings) {
     const target = Number(body.settings.weeklyTarget);
     const weekStart = Number(body.settings.weekStart);
     if (Number.isFinite(target) && target > 0) state.settings.weeklyTarget = target;
     if (weekStart === 0 || weekStart === 1) state.settings.weekStart = weekStart;
   }
   await persist();
-  res.json(publicState());
+  // The extra `imported` field lets the client report what a merge did; the
+  // client's applyState ignores it, so replace callers are unaffected.
+  res.json(Object.assign({ imported: { added, skipped, mode: merge ? 'merge' : 'replace' } }, publicState()));
 });
 
 app.post('/api/clear', async (req, res) => {

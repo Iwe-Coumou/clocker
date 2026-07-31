@@ -230,6 +230,78 @@ test('durations stored on the old sub-minute grid are rounded on load', async ()
   }
 });
 
+test('merge import adds new entries and skips ones already present', async () => {
+  // Seed the server as if it were the main install.
+  let state = await api('/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ entries: [
+      { id: 'shared-1', date: '2026-07-20', hours: 2, note: 'on both' }
+    ] })
+  });
+  assert.equal(state.entries.length, 1);
+
+  // A backup off another machine: it still carries the shared entry (same id),
+  // plus two logged while away.
+  state = await api('/api/import', {
+    method: 'POST',
+    body: JSON.stringify({
+      mode: 'merge',
+      entries: [
+        { id: 'shared-1', date: '2026-07-20', hours: 2, note: 'on both' },
+        { id: 'away-1', date: '2026-07-25', hours: 5, note: 'trip day 1' },
+        { id: 'away-2', date: '2026-07-26', hours: 6, note: 'trip day 2' }
+      ]
+    })
+  });
+
+  assert.equal(state.imported.added, 2, 'the two away entries are added');
+  assert.equal(state.imported.skipped, 1, 'the shared entry is skipped, not doubled');
+  assert.equal(state.entries.length, 3);
+  const ids = state.entries.map((e) => e.id).sort();
+  assert.deepEqual(ids, ['away-1', 'away-2', 'shared-1']);
+
+  // Repeating the same merge is a no-op — nothing is duplicated.
+  state = await api('/api/import', {
+    method: 'POST',
+    body: JSON.stringify({
+      mode: 'merge',
+      entries: [
+        { id: 'away-1', date: '2026-07-25', hours: 5, note: 'trip day 1' },
+        { id: 'away-2', date: '2026-07-26', hours: 6, note: 'trip day 2' }
+      ]
+    })
+  });
+  assert.equal(state.imported.added, 0);
+  assert.equal(state.imported.skipped, 2);
+  assert.equal(state.entries.length, 3);
+});
+
+test('merge does not overwrite the target settings; replace does', async () => {
+  let state = await api('/api/settings', {
+    method: 'PUT', body: JSON.stringify({ weeklyTarget: 40, weekStart: 1 })
+  });
+  assert.equal(state.settings.weeklyTarget, 40);
+
+  // A merge carrying different settings leaves the target alone.
+  state = await api('/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ mode: 'merge', entries: [{ id: 'm-1', date: '2026-07-20', hours: 1 }], settings: { weeklyTarget: 8 } })
+  });
+  assert.equal(state.settings.weeklyTarget, 40, 'merge keeps the local target');
+
+  // A replace adopts them, as it always has.
+  state = await api('/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ entries: [{ id: 'r-1', date: '2026-07-20', hours: 1 }], settings: { weeklyTarget: 12 } })
+  });
+  assert.equal(state.settings.weeklyTarget, 12, 'replace adopts the backup target');
+});
+
+test('the running version is reported to the client', async () => {
+  const state = await api('/api/state');
+  assert.match(state.version, /^\d+\.\d+\.\d+$/, 'a semver string for the footer');
+});
+
 test('concurrent writes all survive', async () => {
   // The regression this guards: re-reading the file per request meant a
   // second request could load a copy that predated the first request's

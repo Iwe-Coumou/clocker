@@ -54,6 +54,9 @@
       ? Object.assign({}, state.activeShift, { receivedAt: Date.now() })
       : null;
     setConnected(true);
+    if (state.version){
+      document.getElementById('appVersion').textContent = 'Clocker v' + state.version;
+    }
     renderShift();
   }
 
@@ -739,7 +742,10 @@
     download('/api/export.csv', `clocker-${todayStr()}.csv`);
   });
 
-  document.getElementById('importInput').addEventListener('change', (ev) => {
+  // Both import buttons share this; `mode` is 'replace' or 'merge'. Replace
+  // warns because it's destructive; merge only adds, so it just confirms the
+  // count and reports how many were new versus already present.
+  function handleImport(ev, mode){
     const file = ev.target.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -747,25 +753,34 @@
       try{
         const data = JSON.parse(reader.result);
         if (!Array.isArray(data.entries)) throw new Error('Invalid file');
-        const proceed = window.confirm(
-          `This backup contains ${data.entries.length} entries. Importing will replace all data currently stored on the server. Continue?`
+        const proceed = window.confirm(mode === 'merge'
+          ? `Merge ${data.entries.length} entries from this backup into the data already on the server? Entries already present are skipped, not duplicated.`
+          : `This backup contains ${data.entries.length} entries. Importing will replace all data currently stored on the server. Continue?`
         );
         if (!proceed) return;
         const state = await apiCall('/api/import', {
           method: 'POST',
-          body: JSON.stringify({ entries: data.entries, settings: data.settings })
+          body: JSON.stringify({ entries: data.entries, settings: data.settings, mode })
         });
         applyState(state);
         renderAll();
         weeklyTargetInput.value = settings.weeklyTarget;
         weekStartInput.value = String(settings.weekStart);
+        if (mode === 'merge' && state.imported){
+          const { added, skipped } = state.imported;
+          window.alert(`Added ${added} new ${added === 1 ? 'entry' : 'entries'}` +
+            (skipped ? `, skipped ${skipped} already present.` : '.'));
+        }
       }catch(e){
         window.alert('Could not import that backup: ' + e.message);
       }
       ev.target.value = '';
     };
     reader.readAsText(file);
-  });
+  }
+
+  document.getElementById('importInput').addEventListener('change', (ev) => handleImport(ev, 'replace'));
+  document.getElementById('mergeInput').addEventListener('change', (ev) => handleImport(ev, 'merge'));
 
   document.getElementById('clearAllBtn').addEventListener('click', async () => {
     const proceed = window.confirm('Erase all logged entries on the server? This cannot be undone. Export a backup first if you want to keep a copy.');
