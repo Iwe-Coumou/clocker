@@ -64,6 +64,8 @@
         <span id="shiftStatus" class="shift-status">Not running</span>
       </div>
 
+      <div id="shiftProjection" class="shift-projection" hidden></div>
+
       <input type="text" id="shiftNoteInput" class="shift-note-input" placeholder="What are you working on? (optional)" maxlength="120">
 
       <div class="shift-buttons">
@@ -152,6 +154,11 @@
         <option value="1">Monday</option>
         <option value="0">Sunday</option>
       </select>
+    </label>
+
+    <label class="settings-check">
+      <input type="checkbox" id="overtimeChimeInput">
+      Chime when a running shift takes you into overtime
     </label>
 
     <div class="settings-divider"></div>

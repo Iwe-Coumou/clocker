@@ -216,6 +216,27 @@ button, input, select{ font-family:inherit; color:inherit; }
   color:var(--paper-dim);
 }
 
+.shift-projection{
+  text-align:center;
+  font-size:13px;
+  color:var(--paper-dim);
+  padding:6px 12px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  transition:color 0.2s, border-color 0.2s, background 0.2s;
+}
+.shift-projection strong{
+  font-family:var(--font-mono);
+  color:var(--paper);
+  font-weight:600;
+}
+.shift-projection.is-over{
+  color:var(--rust);
+  border-color:rgba(192,82,74,0.5);
+  background:rgba(192,82,74,0.08);
+}
+.shift-projection.is-over strong{ color:var(--rust); }
+
 .shift-note-input{
   width:100%;
   max-width:420px;
@@ -696,6 +717,16 @@ input:focus-visible, select:focus-visible, button:focus-visible{
   font-size:13px;
   color:var(--paper-dim);
 }
+
+.settings-check{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size:13px;
+  color:var(--paper-dim);
+  cursor:pointer;
+}
+.settings-check input{ accent-color:var(--brass); width:16px; height:16px; }
 
 .settings-divider{ height:1px; background:var(--line); margin:2px 0; }
 

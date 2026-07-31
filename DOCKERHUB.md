@@ -81,10 +81,11 @@ The app always listens on port **3000** inside the container; map it to whatever
 ## Tags
 
 - `latest` — the newest release. Convenient, but it moves under you without warning; pin a version for anything you rely on.
-- `1.3.0`, `1.2.1`, … — specific releases. Multi-arch: `linux/amd64` and `linux/arm64` (works on a Raspberry Pi, Synology, or Apple Silicon).
+- `1.4.0`, `1.3.0`, … — specific releases. Multi-arch: `linux/amd64` and `linux/arm64` (works on a Raspberry Pi, Synology, or Apple Silicon).
 
 ## Changelog
 
+- **1.4.0** — Overtime chime: a running shift projects the week's total live and chimes when it crosses your weekly target (toggle in Contract & data).
 - **1.3.0** — Merge import: add another machine's exported hours to an existing install without replacing anything (entries already present are skipped). A version footer links back to the source and this page.
 - **1.2.1** — Durations are now stored as whole minutes, fixing weekly totals that drifted when an entry was edited (a one-minute edit could move a total by two). Entries from older versions are rounded to the nearest minute on first start. CSV export gains an exact `minutes` column.
 - **1.2.0** — Live shift stopwatch with pause/resume, day ledger with inline editing, week history, JSON/CSV export and import, optional Basic Auth.

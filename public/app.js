@@ -267,6 +267,7 @@
     const dateBadge = document.getElementById('shiftDateBadge');
 
     clockEl.textContent = fmtClock(shiftElapsedMs(activeShift));
+    renderShiftProjection();
 
     if (!activeShift){
       statusEl.textContent = 'Not running';
@@ -307,11 +308,112 @@
     }
   }
 
+  // ---------- Overtime projection & chime ----------
+  // While a shift runs, project the week's total as it *will* stand once this
+  // shift is logged — the hours already banked this week plus the live elapsed
+  // — and chime the moment that projection crosses the weekly target. The
+  // shift's own date decides which week it lands in, so the projection matches
+  // where the hours will actually go, not just "this week".
+
+  function projectedWeek(){
+    const wkStartStr = toDateStr(startOfWeek(activeShift ? activeShift.date : todayStr()));
+    const logged = weekTotal(wkStartStr, entriesByDay()).total;
+    const total = logged + shiftElapsedMs(activeShift) / 3600000;
+    const target = settings.weeklyTarget;
+    return { total, target, over: target > 0 && total > target };
+  }
+
+  function renderShiftProjection(){
+    const el = document.getElementById('shiftProjection');
+    if (!activeShift){
+      el.hidden = true;
+      el.classList.remove('is-over');
+      return;
+    }
+    const { total, target, over } = projectedWeek();
+    el.hidden = false;
+    el.classList.toggle('is-over', over);
+    const tail = over
+      ? `${fmtHM(total - target)} over`
+      : `${fmtHM(target - total)} to go`;
+    el.innerHTML = `Week would be <strong>${fmtHM(total)}</strong> / ${fmtHM(target)} · ${tail}`;
+  }
+
+  // A single AudioContext, created and unlocked by the user gesture that starts
+  // or resumes a shift — browsers block audio that isn't tied to one.
+  let audioCtx = null;
+  function ensureAudio(){
+    if (audioCtx) return audioCtx;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) audioCtx = new AC();
+    return audioCtx;
+  }
+  function resumeAudio(){
+    const ctx = ensureAudio();
+    if (ctx && ctx.state === 'suspended') ctx.resume();
+  }
+  function playChime(){
+    const ctx = ensureAudio();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    const now = ctx.currentTime;
+    // A rising two-tone (A5 -> D6) — a notification, not an alarm.
+    [880, 1174.66].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const t = now + i * 0.18;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.25, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0008, t + 0.4);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.42);
+    });
+  }
+
+  function notifyOvertime(){
+    try{
+      if (window.Notification && Notification.permission === 'granted'){
+        new Notification('Clocker', { body: 'This shift has taken you into overtime for the week.' });
+      }
+    }catch(e){ /* the chime is the real signal; a notification is a bonus */ }
+  }
+
+  const CHIME_KEY = 'clocker.overtimeChime';
+  function chimeEnabled(){ return localStorage.getItem(CHIME_KEY) !== '0'; } // default on
+
+  // Fires once per crossing. Keyed to the shift's start time so ending one
+  // shift and starting another re-arms cleanly, and seeded on first sight so a
+  // shift that begins *already* in overtime doesn't chime on tick one — only a
+  // genuine crossing during the session does. Dropping back under (an edit, a
+  // discarded sibling entry) re-arms it.
+  let monitoredStart = null;
+  let overtimeSeen = false;
+  function checkOvertime(){
+    if (!activeShift){ monitoredStart = null; return; }
+    const { over } = projectedWeek();
+    if (monitoredStart !== activeShift.startedAt){
+      monitoredStart = activeShift.startedAt;
+      overtimeSeen = over;
+      return;
+    }
+    if (over && !overtimeSeen){
+      if (chimeEnabled()){ playChime(); notifyOvertime(); }
+      overtimeSeen = true;
+    } else if (!over){
+      overtimeSeen = false;
+    }
+  }
+
   // Ticks the visible clock every second between server round-trips; harmless
   // no-op while no shift is running.
   setInterval(() => {
     if (activeShift && activeShift.running){
       document.getElementById('shiftClock').textContent = fmtClock(shiftElapsedMs(activeShift));
+      renderShiftProjection();
+      checkOvertime();
     }
   }, 1000);
 
@@ -632,6 +734,7 @@
   const shiftNoteInput = document.getElementById('shiftNoteInput');
 
   document.getElementById('shiftStartBtn').addEventListener('click', async () => {
+    resumeAudio(); // unlock the chime while we have the click gesture
     const note = shiftNoteInput.value.trim();
     try{
       const state = await apiCall('/api/shift/start', {
@@ -654,6 +757,7 @@
   });
 
   document.getElementById('shiftResumeBtn').addEventListener('click', async () => {
+    resumeAudio();
     try{
       const state = await apiCall('/api/shift/resume', { method: 'POST' });
       applyState(state);
@@ -699,11 +803,27 @@
   const settingsDialog = document.getElementById('settingsDialog');
   const weeklyTargetInput = document.getElementById('weeklyTargetInput');
   const weekStartInput = document.getElementById('weekStartInput');
+  const overtimeChimeInput = document.getElementById('overtimeChimeInput');
 
   document.getElementById('settingsBtn').addEventListener('click', () => {
     weeklyTargetInput.value = settings.weeklyTarget;
     weekStartInput.value = String(settings.weekStart);
+    overtimeChimeInput.checked = chimeEnabled();
     settingsDialog.showModal();
+  });
+
+  // The chime preference is per-device (you might want sound on a desktop but
+  // not a phone), so it lives in localStorage rather than the synced settings.
+  // Enabling it is a click, so it's also the moment to ask for notification
+  // permission and unlock audio while a gesture is in hand.
+  overtimeChimeInput.addEventListener('change', () => {
+    localStorage.setItem(CHIME_KEY, overtimeChimeInput.checked ? '1' : '0');
+    if (overtimeChimeInput.checked){
+      resumeAudio();
+      if (window.Notification && Notification.permission === 'default'){
+        Notification.requestPermission();
+      }
+    }
   });
 
   settingsDialog.addEventListener('close', async () => {
