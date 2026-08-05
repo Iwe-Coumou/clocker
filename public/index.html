@@ -33,6 +33,7 @@
           <span id="weekTotal" class="figure">0:00</span><span class="figure-unit">logged</span>
         </div>
         <div class="readout-sub" id="weekSub">of 8:00 this week &middot; 8:00 left</div>
+        <div class="readout-carry" id="carryNote" hidden></div>
       </div>
     </div>
 
@@ -40,6 +41,10 @@
       <div class="meta-item">
         <span class="meta-label">Week</span>
         <span class="meta-value" id="weekRangeLabel">—</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Balance</span>
+        <span class="meta-value" id="balanceValue">—</span>
       </div>
       <div class="meta-item">
         <span class="meta-label">Days logged</span>
@@ -115,9 +120,9 @@
   <section class="panel">
     <div class="panel-header-row">
       <h2 class="panel-title">Day ledger</h2>
-      <div class="panel-toggle" role="group" aria-label="Ledger range">
-        <button class="toggle-btn is-active" data-range="week" type="button">This week</button>
-        <button class="toggle-btn" data-range="all" type="button">All time</button>
+      <div class="panel-toggle" id="ledgerToggle" role="group" aria-label="Ledger range">
+        <button class="toggle-btn is-active" data-value="week" type="button">This week</button>
+        <button class="toggle-btn" data-value="all" type="button">All time</button>
       </div>
     </div>
     <div id="ledgerList" class="ledger-list"></div>
@@ -125,9 +130,16 @@
   </section>
 
   <section class="panel">
-    <h2 class="panel-title">Week history</h2>
+    <div class="panel-header-row">
+      <h2 class="panel-title">History</h2>
+      <div class="panel-toggle" id="historyToggle" role="group" aria-label="History period">
+        <button class="toggle-btn is-active" data-value="week" type="button">Weeks</button>
+        <button class="toggle-btn" data-value="month" type="button">Months</button>
+      </div>
+    </div>
     <div id="historyChart" class="history-chart"></div>
     <div id="historyTable" class="history-table"></div>
+    <p id="historySummary" class="hist-summary" hidden></p>
   </section>
 
   <footer class="site-footer">
@@ -148,6 +160,8 @@
       <input type="number" id="weeklyTargetInput" min="1" max="80" step="0.5">
     </label>
 
+    <p class="settings-note">Hours carry between weeks: go over one week and the next week's goal drops by the surplus, come up short and it rises. The balance runs on indefinitely &mdash; nothing resets it on its own.</p>
+
     <label class="settings-field">
       Week starts on
       <select id="weekStartInput">
@@ -160,6 +174,18 @@
       <input type="checkbox" id="overtimeChimeInput">
       Chime when a running shift takes you into overtime
     </label>
+
+    <div class="settings-divider"></div>
+
+    <div class="settle-row">
+      <div class="settle-text">
+        <span class="settle-label">Running balance</span>
+        <span class="settle-value" id="settleBalance">&mdash;</span>
+        <span class="settle-since" id="settleSince"></span>
+      </div>
+      <button type="button" id="settleBtn" class="ghost-btn">Settle up</button>
+    </div>
+    <p class="settings-note">Settling draws a line under everything up to this week and starts the balance from level. Your entries aren't touched &mdash; only the over/under count restarts.</p>
 
     <div class="settings-divider"></div>
 

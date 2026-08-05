@@ -1,8 +1,8 @@
 {
   "name": "clocker",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
-  "description": "Self-hosted weekly hours timecard with persistent file-backed storage.",
+  "description": "Self-hosted weekly hours timecard, balanced across the month, with persistent file-backed storage.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

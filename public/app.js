@@ -3,6 +3,7 @@
 
   const DOW_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const MONTH_LONG = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
   // ---------- State ----------
   // Source of truth lives server-side (a JSON file on the Docker volume).
@@ -14,6 +15,7 @@
   // { date, note, running, elapsedMs, receivedAt } | null — see applyState.
   let activeShift = null;
   let ledgerRange = 'week'; // 'week' | 'all'
+  let historyView = 'week'; // 'week' | 'month'
   let openDays = new Set();
   let editingId = null; // entry id currently open for inline editing
 
@@ -46,6 +48,7 @@
   function applyState(state){
     entries = Array.isArray(state.entries) ? state.entries : [];
     settings = Object.assign(settings, state.settings || {});
+    dataVersion++; // every derived table below is keyed to this — see entriesByDay
     // The server sends elapsed duration rather than a start timestamp, and we
     // stamp arrival with our own clock. Every subsequent tick is then a delta
     // between two readings of the *same* clock, so a device whose time is off
@@ -152,13 +155,25 @@
   }
 
   // ---------- Aggregation ----------
+  // Every mutation funnels through applyState, which bumps dataVersion, so a
+  // derived table stays valid until that number moves. Caching earns its keep
+  // here: the once-a-second shift tick asks for the current week's goal, which
+  // walks a whole month of days, and rebuilding the day index on each of those
+  // ticks would mean re-scanning every entry ever logged.
 
+  let dataVersion = 0;
+
+  let byDayCache = null;
+  let byDayVersion = -1;
   function entriesByDay(){
+    if (byDayVersion === dataVersion) return byDayCache;
     const map = new Map();
     for (const e of entries){
       if (!map.has(e.date)) map.set(e.date, []);
       map.get(e.date).push(e);
     }
+    byDayCache = map;
+    byDayVersion = dataVersion;
     return map;
   }
 
@@ -182,6 +197,156 @@
       total += t;
     }
     return { total, daysLogged };
+  }
+
+  // ---------- The running balance and the rolling goal ----------
+  // The week is the contracted unit, and being ahead or behind it is one
+  // continuous fact about your hours — not something a calendar boundary can
+  // end. So whatever a week banks above or below the contracted figure is
+  // handed to the next week as a carry, indefinitely: a 12 hour week against an
+  // 8 hour contract leaves next week asking for 4, a 4 hour week leaves it
+  // asking for 12.
+  //
+  // Nothing resets this automatically. A month boundary is just a calendar, and
+  // zeroing on one would delete hours that were really worked. Forgiving the
+  // balance is a decision, so it's a button — see settings.balanceAnchor, the
+  // week the count starts from.
+
+  function nextWeekStart(weekStartStr){ return toDateStr(addDays(parseDateStr(weekStartStr), 7)); }
+  function prevWeekStart(weekStartStr){ return toDateStr(addDays(parseDateStr(weekStartStr), -7)); }
+
+  function firstLoggedWeek(){
+    let first = null;
+    for (const dateStr of entriesByDay().keys()){
+      const wk = weekKeyOf(dateStr);
+      if (!first || wk < first) first = wk;
+    }
+    return first;
+  }
+
+  // Where the balance starts counting: the settle point if there is one, the
+  // first logged week otherwise — and the later of the two once both exist,
+  // since settling is meant to draw a line under everything before it.
+  function balanceStart(){
+    const anchor = settings.balanceAnchor
+      ? toDateStr(startOfWeek(settings.balanceAnchor))
+      : null;
+    const first = firstLoggedWeek();
+    if (anchor && first) return anchor > first ? anchor : first;
+    return anchor || first || toDateStr(startOfWeek(todayStr()));
+  }
+
+  // Every week from the start of the balance through the current one, each with
+  // the goal it was actually held to. Built in one pass because a week's goal
+  // depends on every week before it.
+  let scheduleCache = null;
+  let scheduleVersion = -1;
+  function schedule(){
+    if (scheduleVersion === dataVersion) return scheduleCache;
+
+    const byDay = entriesByDay();
+    const base = settings.weeklyTarget;
+    const currentWk = toDateStr(startOfWeek(todayStr()));
+    let last = currentWk;
+    for (const dateStr of byDay.keys()){
+      const wk = weekKeyOf(dateStr);
+      if (wk > last) last = wk; // a backdated entry can sit past this week
+    }
+
+    const rows = [];
+    const index = new Map();
+    let banked = 0;
+    let wk = balanceStart();
+    // The bound is a guard against a corrupt anchor date, not a real limit —
+    // 5000 weeks is close to a century of them.
+    for (let i = 0; wk <= last && i < 5000; i++){
+      // What the contract had asked for by the end of last week, against what
+      // was actually banked by then. Positive means ahead.
+      const carryIn = banked - i * base;
+      // Clamping at zero never loses a surplus: the goal is derived from the
+      // running totals, so anything the clamp swallows is still in `banked` and
+      // shows up as a lower goal the week after.
+      const goal = Math.max(0, base - carryIn);
+      const week = weekTotal(wk, byDay);
+      banked += week.total;
+      const row = { wk, index: i, total: week.total, daysLogged: week.daysLogged, goal, carryIn };
+      rows.push(row);
+      index.set(wk, row);
+      wk = nextWeekStart(wk);
+    }
+
+    scheduleCache = { rows, index, start: rows.length ? rows[0].wk : currentWk, currentWk };
+    scheduleVersion = dataVersion;
+    return scheduleCache;
+  }
+
+  function weekRow(weekStartStr){ return schedule().index.get(weekStartStr); }
+
+  // The contracted weekly hours, adjusted by everything banked before this week.
+  function weekGoal(weekStartStr){
+    const row = weekRow(weekStartStr);
+    return row ? row.goal : settings.weeklyTarget;
+  }
+
+  // How you stood at the end of last week. Deliberately not the balance
+  // including this week: the current week is still in progress, and counting
+  // its unworked hours as a debt would show a fresh Monday as 8:00 behind.
+  function settledBalance(){
+    const row = weekRow(schedule().currentWk);
+    return row ? row.carryIn : 0;
+  }
+
+  // ---------- Calendar months (descriptive only) ----------
+  // The month view makes no claim about over or under — that signal lives on
+  // the weekly scale, where the contract is. So a month here is just the plain
+  // calendar month a day falls in, and its numbers are only what was logged.
+
+  function monthKeyOf(dateStr){ return dateStr.slice(0, 7); }
+  function monthName(monthKey){ return MONTH_LONG[Number(monthKey.slice(5, 7)) - 1]; }
+  function fmtMonthLabel(monthKey){ return `${monthName(monthKey)} ${monthKey.slice(0, 4)}`; }
+
+  function daysInMonth(monthKey){
+    const [y, m] = monthKey.split('-').map(Number);
+    return new Date(y, m, 0).getDate(); // day 0 of the next month is the last of this one
+  }
+
+  function prevMonthKey(monthKey){
+    const [y, m] = monthKey.split('-').map(Number);
+    const d = new Date(y, m - 2, 1); // m is 1-based here, and we want the month before
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  let monthCache = new Map();
+  let monthCacheVersion = -1;
+  function monthStats(monthKey){
+    if (monthCacheVersion !== dataVersion){
+      monthCache.clear();
+      monthCacheVersion = dataVersion;
+    }
+    if (monthCache.has(monthKey)) return monthCache.get(monthKey);
+
+    let total = 0;
+    let daysLogged = 0;
+    for (const [dateStr, list] of entriesByDay()){
+      if (monthKeyOf(dateStr) !== monthKey) continue;
+      const dayHours = list.reduce((sum, e) => sum + e.hours, 0);
+      if (dayHours > 0) daysLogged++;
+      total += dayHours;
+    }
+
+    // Per-week rather than per-month is what makes a 28 day February comparable
+    // to a 31 day August, and it's the figure that sits next to the contract.
+    // The month in progress is divided by the days that have actually happened,
+    // not the whole month — otherwise a good first week reads as a terrible
+    // month right up until the last day of it.
+    const today = todayStr();
+    const days = monthKey === monthKeyOf(today)
+      ? Math.max(1, Number(today.slice(8, 10)))
+      : daysInMonth(monthKey);
+    const weeks = days / 7;
+    const stats = { monthKey, total, daysLogged, weeks, perWeek: total / weeks };
+    monthCache.set(monthKey, stats);
+    return stats;
   }
 
   // ---------- CRUD ----------
@@ -311,16 +476,22 @@
   // ---------- Overtime projection & chime ----------
   // While a shift runs, project the week's total as it *will* stand once this
   // shift is logged — the hours already banked this week plus the live elapsed
-  // — and chime the moment that projection crosses the weekly target. The
-  // shift's own date decides which week it lands in, so the projection matches
-  // where the hours will actually go, not just "this week".
+  // — and chime the moment that projection crosses the week's goal. The shift's
+  // own date decides which week it lands in, so the projection matches where
+  // the hours will actually go, not just "this week".
+  //
+  // The bar it has to clear is the *adjusted* goal, not the flat contracted
+  // figure: on a week trimmed to 4:00 because the month is already running
+  // ahead, the fifth hour is the one worth a chime.
 
   function projectedWeek(){
     const wkStartStr = toDateStr(startOfWeek(activeShift ? activeShift.date : todayStr()));
     const logged = weekTotal(wkStartStr, entriesByDay()).total;
     const total = logged + shiftElapsedMs(activeShift) / 3600000;
-    const target = settings.weeklyTarget;
-    return { total, target, over: target > 0 && total > target };
+    const target = weekGoal(wkStartStr);
+    // A goal of zero is a real answer, not a missing one — the month is already
+    // covered through this week, so the very first minute is over.
+    return { total, target, over: total > target };
   }
 
   function renderShiftProjection(){
@@ -422,17 +593,37 @@
     const wkStart = startOfWeek(today);
     const wkStartStr = toDateStr(wkStart);
     const { total, daysLogged } = weekTotal(wkStartStr, byDay);
-    const target = settings.weeklyTarget;
+    const week = weekRow(wkStartStr);
+    const base = settings.weeklyTarget;
+    const goal = week ? week.goal : base;
+    const carryIn = week ? week.carryIn : 0;
 
     document.getElementById('weekTotal').textContent = fmtHM(total);
-    const remaining = target - total;
+    const remaining = goal - total;
     const sub = document.getElementById('weekSub');
-    if (remaining > 0){
-      sub.textContent = `of ${fmtHM(target)} this week \u00b7 ${fmtHM(remaining)} left`;
+    if (goal <= 0){
+      sub.textContent = 'nothing required this week \u00b7 you\u2019re already ahead';
+    } else if (remaining > 0){
+      sub.textContent = `of ${fmtHM(goal)} this week \u00b7 ${fmtHM(remaining)} left`;
     } else if (remaining === 0){
-      sub.textContent = `of ${fmtHM(target)} this week \u00b7 quota met exactly`;
+      sub.textContent = `of ${fmtHM(goal)} this week \u00b7 goal met exactly`;
     } else {
-      sub.textContent = `of ${fmtHM(target)} this week \u00b7 ${fmtHMSigned(remaining)} over`;
+      // "over" already carries the sign \u2014 fmtHMSigned here would read "\u221212:00 over".
+      sub.textContent = `of ${fmtHM(goal)} this week \u00b7 ${fmtHM(-remaining)} over`;
+    }
+
+    // Only worth a line once the goal has actually moved off the contracted
+    // figure \u2014 on an ordinary week it would just be noise. Half a minute is the
+    // threshold because that's the point below which nothing here can render a
+    // difference anyway.
+    const carryNote = document.getElementById('carryNote');
+    if (Math.abs(carryIn) < 1 / 120){
+      carryNote.hidden = true;
+    } else {
+      carryNote.hidden = false;
+      carryNote.textContent = carryIn > 0
+        ? `${fmtHM(base)} contracted \u00b7 ${fmtHM(carryIn)} already banked ahead`
+        : `${fmtHM(base)} contracted \u00b7 ${fmtHM(-carryIn)} still owed`;
     }
 
     const wkEnd = addDays(wkStart, 6);
@@ -440,9 +631,18 @@
       `${fmtDayLabel(toDateStr(wkStart))} \u2013 ${fmtDayLabel(toDateStr(wkEnd))}`;
     document.getElementById('daysLoggedLabel').textContent = `${daysLogged} / 7`;
 
+    const balanceEl = document.getElementById('balanceValue');
+    balanceEl.textContent = Math.abs(carryIn) < 1 / 120 ? 'level' : fmtHMSigned(carryIn);
+    balanceEl.style.color = carryIn > 0
+      ? 'var(--teal)'
+      : (carryIn < 0 ? 'var(--brass-bright)' : 'var(--paper)');
+
     const statusEl = document.getElementById('statusLabel');
-    if (total >= target && target > 0){
-      statusEl.textContent = 'Quota met';
+    if (goal <= 0){
+      statusEl.textContent = 'Covered';
+      statusEl.style.color = 'var(--teal)';
+    } else if (total >= goal){
+      statusEl.textContent = 'Goal met';
       statusEl.style.color = 'var(--teal)';
     } else if (total > 0){
       statusEl.textContent = 'In progress';
@@ -452,18 +652,30 @@
       statusEl.style.color = 'var(--paper-dim)';
     }
 
-    drawPunchStrip(total, target);
+    drawPunchStrip(total, goal);
   }
 
   function drawPunchStrip(total, target){
     const svg = document.getElementById('punchStrip');
-    const segCount = Math.max(1, Math.round(target) || 1);
-    const segHours = target / segCount;
     const vbW = 640, vbH = 100;
     const gap = 8;
-    const segW = (vbW - gap*(segCount-1)) / segCount;
     const segH = 56;
     const y = (vbH - segH) / 2;
+
+    // A goal of zero means the month is already covered through this week.
+    // There's no quota left to divide into segments, and an empty grid would
+    // read as "nothing done" \u2014 the opposite of the truth \u2014 so show it filled.
+    if (target <= 0){
+      svg.innerHTML = `<rect x="0" y="${y}" width="${vbW}" height="${segH}" rx="6" fill="#4fa69a"/>`;
+      return;
+    }
+
+    // One box per hour reads beautifully at a normal 8:00 goal, but a goal that
+    // has absorbed weeks of deficit would shred the strip into slivers. Past a
+    // dozen the boxes stop being hours and just become a proportional gauge.
+    const segCount = Math.min(12, Math.max(1, Math.round(target) || 1));
+    const segHours = target / segCount;
+    const segW = (vbW - gap*(segCount-1)) / segCount;
 
     let svgParts = [];
     for (let i=0;i<segCount;i++){
@@ -639,53 +851,174 @@
   }
 
   function renderHistory(byDay){
-    const target = settings.weeklyTarget;
-    const today = todayStr();
-    const currentWkKey = toDateStr(startOfWeek(today));
+    document.getElementById('historyChart').innerHTML = '';
+    document.getElementById('historyTable').innerHTML = '';
+    document.getElementById('historySummary').hidden = true;
+    if (historyView === 'month') renderMonthHistory(byDay);
+    else renderWeekHistory(byDay);
+  }
 
-    const weekKeys = new Set();
-    for (const dateStr of byDay.keys()) weekKeys.add(weekKeyOf(dateStr));
-    weekKeys.add(currentWkKey);
-
-    let weeks = Array.from(weekKeys).sort().reverse().slice(0, 8);
-    const weekData = weeks.map(wk => {
-      const { total, daysLogged } = weekTotal(wk, byDay);
-      return { wk, total, daysLogged };
-    });
-
+  // One bar per period, scaled against the tallest thing on show \u2014 the totals
+  // and the goals both, so a bar that falls short of its goal looks short.
+  function drawHistoryBars(rows){
     const chart = document.getElementById('historyChart');
-    const table = document.getElementById('historyTable');
-    chart.innerHTML = '';
-    table.innerHTML = '';
-
-    const maxVal = Math.max(target, ...weekData.map(w => w.total), 1);
-    const chartOrder = weekData.slice().reverse(); // oldest -> newest, left to right
-
-    for (const w of chartOrder){
-      const pct = Math.max(2, (w.total / maxVal) * 100);
-      const isCurrent = w.wk === currentWkKey;
-      const isOver = w.total > target;
+    const maxVal = Math.max(1, ...rows.map((r) => Math.max(r.total, r.goal)));
+    for (const r of rows.slice().reverse()){ // oldest -> newest, left to right
+      const pct = Math.max(2, (r.total / maxVal) * 100);
+      const cls = r.total > r.goal ? 'is-over' : (r.isCurrent ? 'is-current' : '');
       const col = document.createElement('div');
       col.className = 'hbar-col';
-      const start = parseDateStr(w.wk);
       col.innerHTML = `
-        <div class="hbar-track"><div class="hbar ${isOver ? 'is-over' : (isCurrent ? 'is-current' : '')}" style="height:${pct}%"></div></div>
-        <div class="hbar-label">${MONTH_SHORT[start.getMonth()]} ${start.getDate()}</div>`;
+        <div class="hbar-track"><div class="hbar ${cls}" style="height:${pct}%"></div></div>
+        <div class="hbar-label">${r.label}</div>`;
       chart.appendChild(col);
     }
+  }
 
-    for (const w of weekData){
-      const start = parseDateStr(w.wk);
-      const end = addDays(start, 6);
-      const diff = w.total - target;
-      const row = document.createElement('div');
-      row.className = 'hist-row';
-      const totalClass = diff > 0 ? 'is-over' : (diff === 0 ? 'is-met' : '');
-      row.innerHTML = `
-        <span class="hist-range">${fmtDayLabel(toDateStr(start))} \u2013 ${fmtDayLabel(toDateStr(end))}${w.wk === currentWkKey ? ' (current)' : ''}</span>
-        <span class="hist-total ${totalClass}">${fmtHM(w.total)}${diff !== 0 ? ` <span style="opacity:.7;font-weight:400">(${fmtHMSigned(diff)})</span>` : ''}</span>`;
-      table.appendChild(row);
+  function histRow(rangeHtml, valueHtml, totalClass){
+    const row = document.createElement('div');
+    row.className = 'hist-row';
+    row.innerHTML = `
+      <span class="hist-range">${rangeHtml}</span>
+      <span class="hist-total ${totalClass || ''}">${valueHtml}</span>`;
+    return row;
+  }
+
+  // The periods to show, newest first: an unbroken run back from the current
+  // one, stopping at the oldest with anything logged (or the cap, whichever
+  // comes first). Unbroken matters now that goals carry — a skipped week is
+  // precisely why the week after it asks for more, so leaving it out of the
+  // table would hide the reason the number moved. Stopping at the oldest entry
+  // is what keeps a brand-new ledger from opening on a wall of empty periods.
+  function periodsBack(current, previous, oldest, cap){
+    const out = [];
+    let key = current;
+    while (out.length < cap){
+      out.push(key);
+      const prev = previous(key);
+      if (!oldest || prev < oldest) break;
+      key = prev;
     }
+    return out;
+  }
+
+  // Weeks are where the contract lives, so this is the view that judges: each
+  // week against the goal it was actually held to, with the running balance
+  // underneath it.
+  function renderWeekHistory(byDay){
+    const currentWkKey = toDateStr(startOfWeek(todayStr()));
+
+    const weeks = periodsBack(currentWkKey, prevWeekStart, firstLoggedWeek(), 8).map((wk) => {
+      const row = weekRow(wk);
+      const start = parseDateStr(wk);
+      return {
+        wk,
+        total: row ? row.total : weekTotal(wk, byDay).total,
+        goal: row ? row.goal : null, // null means the week predates the settle point
+        isCurrent: wk === currentWkKey,
+        label: `${MONTH_SHORT[start.getMonth()]} ${start.getDate()}`
+      };
+    });
+
+    // A settled week has no goal to fall short of, so it is never drawn "over".
+    drawHistoryBars(weeks.map((w) => ({
+      total: w.total,
+      goal: w.goal === null ? w.total : w.goal,
+      isCurrent: w.isCurrent,
+      label: w.label
+    })));
+
+    const table = document.getElementById('historyTable');
+    for (const w of weeks){
+      const start = parseDateStr(w.wk);
+      const range = `${fmtDayLabel(toDateStr(start))} – ${fmtDayLabel(toDateStr(addDays(start, 6)))}`;
+
+      // Weeks before the settle point did have goals at the time, but that
+      // slate was deliberately wiped. Re-deriving one would assert something
+      // the user cancelled, so show what was worked and nothing more.
+      if (w.goal === null){
+        table.appendChild(histRow(
+          `${range} <span class="hist-flag is-quiet">settled</span>`,
+          fmtHM(w.total),
+          'is-settled'
+        ));
+        continue;
+      }
+
+      const diff = w.total - w.goal;
+      // A week whose goal was trimmed or raised says so, otherwise a 4:00 week
+      // reading "goal met" is a mystery months later.
+      const shifted = Math.abs(w.goal - settings.weeklyTarget) >= 1 / 120;
+      table.appendChild(histRow(
+        range + (w.isCurrent ? ' (current)' : '') +
+          (shifted ? ' <span class="hist-flag">adjusted</span>' : ''),
+        `${fmtHM(w.total)}<span class="hist-goal"> / ${fmtHM(w.goal)}</span>` +
+          (diff !== 0 ? ` <span class="hist-diff">(${fmtHMSigned(diff)})</span>` : ''),
+        diff > 0 ? 'is-over' : (diff === 0 && w.total > 0 ? 'is-met' : '')
+      ));
+    }
+
+    renderBalanceSummary();
+  }
+
+  function renderBalanceSummary(){
+    const balance = settledBalance();
+    const summary = document.getElementById('historySummary');
+    summary.hidden = false;
+    if (Math.abs(balance) < 1 / 120){
+      summary.innerHTML = 'Running balance through last week: <strong class="is-met">level</strong>.';
+      return;
+    }
+    summary.innerHTML = 'Running balance through last week: ' +
+      `<strong class="${balance > 0 ? 'is-over' : 'is-under'}">${fmtHMSigned(balance)}</strong> ` +
+      `${balance > 0 ? 'ahead of' : 'behind'} contract, counted from ${fmtDayLabel(schedule().start)}.`;
+  }
+
+  // Months make no claim about over or under: no target, no balance, no
+  // colouring. Just what was logged, and enough shape to read it by.
+  function renderMonthHistory(byDay){
+    const currentKey = monthKeyOf(todayStr());
+    let oldest = null;
+    for (const dateStr of byDay.keys()){
+      const key = monthKeyOf(dateStr);
+      if (!oldest || key < oldest) oldest = key;
+    }
+
+    const ordered = periodsBack(currentKey, prevMonthKey, oldest, 1000);
+    const months = ordered.slice(0, 12).map(monthStats);
+    const currentYear = String(new Date().getFullYear());
+
+    drawHistoryBars(months.map((m) => ({
+      total: m.total,
+      goal: 0, // nothing to fall short of, so no month bar is ever "over"
+      isCurrent: m.monthKey === currentKey,
+      // The year only earns a place on the label once the bar isn't from it.
+      label: MONTH_SHORT[Number(m.monthKey.slice(5, 7)) - 1] +
+        (m.monthKey.slice(0, 4) === currentYear ? '' : ` '${m.monthKey.slice(2, 4)}`)
+    })));
+
+    const table = document.getElementById('historyTable');
+    for (const m of months){
+      const isCurrent = m.monthKey === currentKey;
+      table.appendChild(histRow(
+        `${fmtMonthLabel(m.monthKey)}${isCurrent ? ' (current)' : ''} \u00b7 ` +
+          `${m.daysLogged} day${m.daysLogged === 1 ? '' : 's'}`,
+        `${fmtHM(m.total)}<span class="hist-goal"> \u00b7 ${fmtHM(m.perWeek)}/wk</span>`
+      ));
+    }
+
+    // A plain total across everything on record, descriptive like the rest of
+    // this view. The over/under signal lives in the Weeks tab.
+    const all = ordered.map(monthStats);
+    const total = all.reduce((sum, m) => sum + m.total, 0);
+    const summary = document.getElementById('historySummary');
+    if (total <= 0){
+      summary.hidden = true;
+      return;
+    }
+    summary.hidden = false;
+    summary.innerHTML = `<strong>${fmtHM(total)}</strong> logged across ${all.length} ` +
+      `month${all.length === 1 ? '' : 's'}, since ${fmtMonthLabel(all[all.length - 1].monthKey)}.`;
   }
 
   function escapeHtml(str){
@@ -789,13 +1122,26 @@
     }
   });
 
-  document.querySelectorAll('.toggle-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('is-active'));
-      btn.classList.add('is-active');
-      ledgerRange = btn.dataset.range;
-      renderLedger(entriesByDay());
+  // Scoped to the group that was clicked — there is more than one toggle on the
+  // page now, and a page-wide selector would clear the other one's active state.
+  function wireToggle(groupId, onPick){
+    const group = document.getElementById(groupId);
+    group.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.toggle-btn');
+      if (!btn || btn.classList.contains('is-active')) return;
+      group.querySelectorAll('.toggle-btn').forEach(b => b.classList.toggle('is-active', b === btn));
+      onPick(btn.dataset.value);
     });
+  }
+
+  wireToggle('ledgerToggle', (value) => {
+    ledgerRange = value;
+    renderLedger(entriesByDay());
+  });
+
+  wireToggle('historyToggle', (value) => {
+    historyView = value;
+    renderHistory(entriesByDay());
   });
 
   // ---------- Settings dialog ----------
@@ -805,11 +1151,53 @@
   const weekStartInput = document.getElementById('weekStartInput');
   const overtimeChimeInput = document.getElementById('overtimeChimeInput');
 
+  const settleBalance = document.getElementById('settleBalance');
+  const settleSince = document.getElementById('settleSince');
+
+  function renderSettleRow(){
+    const balance = settledBalance();
+    const level = Math.abs(balance) < 1 / 120;
+    settleBalance.textContent = level ? 'level' : fmtHMSigned(balance);
+    settleBalance.className = 'settle-value' +
+      (level ? '' : (balance > 0 ? ' is-over' : ' is-under'));
+    settleSince.textContent = entries.length
+      ? `counted from ${fmtDayLabel(schedule().start)}`
+      : 'nothing logged yet';
+  }
+
   document.getElementById('settingsBtn').addEventListener('click', () => {
     weeklyTargetInput.value = settings.weeklyTarget;
     weekStartInput.value = String(settings.weekStart);
     overtimeChimeInput.checked = chimeEnabled();
+    renderSettleRow();
     settingsDialog.showModal();
+  });
+
+  // Anchors the balance to this week, so every week before it stops counting.
+  // Sent on its own rather than folded into the dialog's close handler: this is
+  // a deliberate, confirmed action, not a preference that saves on the way out.
+  document.getElementById('settleBtn').addEventListener('click', async () => {
+    const balance = settledBalance();
+    const standing = Math.abs(balance) < 1 / 120
+      ? 'level'
+      : `${fmtHM(Math.abs(balance))} ${balance > 0 ? 'ahead of' : 'behind'} contract`;
+    const proceed = window.confirm(
+      `You're currently ${standing}. Settling clears that and starts counting again from this week. ` +
+      `Your logged entries are kept — only the running balance restarts. Continue?`
+    );
+    if (!proceed) return;
+    try{
+      const state = await apiCall('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ balanceAnchor: toDateStr(startOfWeek(todayStr())) })
+      });
+      applyState(state);
+      renderAll();
+      renderSettleRow();
+    }catch(e){
+      setConnected(false);
+      window.alert('Could not settle the balance: ' + e.message);
+    }
   });
 
   // The chime preference is per-device (you might want sound on a desktop but

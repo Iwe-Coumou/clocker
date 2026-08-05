@@ -4,7 +4,7 @@
 
 > **Note:** The idea, features, and design decisions here are mine; the code itself was written entirely by Claude (Anthropic's AI) from my instructions — I didn't hand-write any of it. It's a quick practical tool and it works, but treat it accordingly if you're evaluating it as a code sample or handing it off to someone else.
 
-A small time tracker for logging hours against a weekly-hours contract (default 8h/week). Log sessions as you work — same-day sessions are automatically added together — and see your current week's progress, days logged, and history of past weeks.
+A small time tracker for logging hours against a weekly-hours contract (default 8h/week). Log sessions as you work — same-day sessions are automatically added together — and see your current week's progress, days logged, and history of past weeks and months. Hours carry between weeks: run long one week and the next week's goal drops to match, so being ahead or behind is one running number rather than something that resets.
 
 This version runs as a tiny Node/Express server in Docker, storing data in a JSON file on a **Docker volume**, so your hours persist across container restarts, rebuilds, and even `docker compose down` — not just for one browser session.
 
@@ -91,16 +91,46 @@ This is fine for personal use behind Tailscale/your LAN. If you ever expose the 
 
 ## How it works
 
-- **Live shift**: press **Start shift** when you sit down to work. It shows a running stopwatch (HH:MM:SS), and you can **Pause**/**Resume** as you take breaks — paused time doesn't count. Press **End & log** when you're done and it adds a single entry for the day you started, with the total time and your note. **Discard** throws the shift away without logging anything (e.g. if you started it by mistake). The shift's state lives on the server, so refreshing the page — or even restarting the container — won't lose a running shift. While a shift runs, a line under the clock projects what the week's total *will* be once the shift is logged (already-banked hours plus live time), and a chime sounds the moment that projection crosses your weekly target — so you know you've hit overtime without watching the numbers. Turn the chime off in Contract & data; it's a per-device preference.
+- **Live shift**: press **Start shift** when you sit down to work. It shows a running stopwatch (HH:MM:SS), and you can **Pause**/**Resume** as you take breaks — paused time doesn't count. Press **End & log** when you're done and it adds a single entry for the day you started, with the total time and your note. **Discard** throws the shift away without logging anything (e.g. if you started it by mistake). The shift's state lives on the server, so refreshing the page — or even restarting the container — won't lose a running shift. While a shift runs, a line under the clock projects what the week's total *will* be once the shift is logged (already-banked hours plus live time), and a chime sounds the moment that projection crosses this week's goal — so you know you've hit overtime without watching the numbers. Turn the chime off in Contract & data; it's a per-device preference.
 - **Log time**: pick a date, enter hours/minutes (or use the quick +15m/+30m/+1h/+2h chips to log against today instantly), optionally add a note, and add the entry. Multiple sessions on the same date are stored separately but summed automatically wherever a daily total is shown. The date field defaults to today but isn't locked — pick any past date to backfill a missed day.
-- **This week's punch**: the header shows total hours logged this week against your weekly quota, with hours remaining (or over).
+- **This week's punch**: the header shows total hours logged this week against this week's goal, with hours remaining (or over), plus your running balance. When the goal has been moved by that balance, a line underneath says so — e.g. `8:00 contracted · 4:00 already banked ahead`.
 - **Day ledger**: browse days with logged time, expand a day to see individual sessions. Sessions that came from the stopwatch also show when they ran and how long they were paused — e.g. `09:15 – 12:40 · paused 0:25`. Entries typed into the form have no measured span, so that line is simply absent rather than faked. Each session has an edit (✎) and delete (✕) button — editing opens the duration, date and note inline, so a mistyped entry or a stopwatch left running too long can be corrected without deleting and re-adding it. Changing the date moves the entry to that day (and drops the recorded times, since they'd then contradict the date beside them). Toggle between "This week" and "All time".
-- **Week history**: a small bar chart plus a table of your last several weeks, each flagged as over/under/on target.
-- **Contract & data** (top-right button): change your weekly hour target or which day the week starts on, export a JSON backup, import a backup, export a CSV sheet, or erase everything.
+- **History**: a small bar chart plus a table, toggling between **Weeks** and **Months**. **Weeks** is the view that judges: each week's total against the goal it was actually held to, an `adjusted` badge on any week whose goal was moved by the carry, and the running balance underneath. **Months** makes no claim about over or under — no target, no colouring — just hours logged, days worked, and an average per week. See "The running balance" below.
+- **Contract & data** (top-right button): change your weekly hour target or which day the week starts on, settle the running balance, export a JSON backup, import a backup, export a CSV sheet, or erase everything.
 
 Two export formats, for two different jobs: **Export backup (.json)** is the one the import buttons read back, so use it to move or restore data. **Export sheet (.csv)** is a flat `date, hours, minutes, note, started_at, ended_at, paused_minutes, logged_at` table for a spreadsheet or an invoice — it can't be imported.
 
 Importing a `.json` backup comes in two modes. **Import (replace)** swaps the whole ledger for the backup's contents — the restore/move path. **Import (merge)** adds the backup's entries to what's already on this server, skipping any it already has (matched by entry id), and leaves the target and week-start untouched. Merge is how you bring a second machine's hours home: run Clocker on a laptop while travelling, export when you're back, and merge that file into your main install. Because the match is by id, merging the same file twice adds nothing the second time.
+
+### The running balance
+
+The week is the contracted unit, and being ahead or behind it is one continuous fact about your hours. So **whatever a week banks above or below the contracted figure is handed to the next week as a carry.** Work 12 hours against an 8-hour contract and next week asks for 4. Work only 4 and next week asks for 12.
+
+This runs on **indefinitely**. Nothing resets it automatically — a month boundary is just a calendar, and zeroing on one would delete hours you really worked. The current balance is in the header, and History → Weeks spells it out underneath the table.
+
+A worked example, 8h/week:
+
+| Week | Carried in | Goal | Logged | Balance after |
+|---|---|---|---|---|
+| 1 | 0:00 | 8:00 | 20:00 | +12:00 |
+| 2 | +12:00 | 0:00 | 0:00 | +4:00 |
+| 3 | +4:00 | 4:00 | 4:00 | 0:00 |
+| 4 | 0:00 | 8:00 | 2:00 | −6:00 |
+| 5 | −6:00 | 14:00 | 6:00 | −14:00 |
+
+Week 2's goal is zero because week 1 already covered it; the surplus a zero can't absorb rolls on to week 3. Week 5 asks for 14:00 because weeks 4 and 5 both came up short.
+
+The live shift measures against the **adjusted** goal too, so on a week trimmed to 4:00 the overtime chime sounds at the fourth hour, not the eighth.
+
+**Settling up.** A balance that carries forever will, after a long enough gap, ask for a week you're never going to work. **Contract & data → Settle up** draws a line under everything up to the current week and starts the count from level. It's deliberate and confirmed, never automatic — nothing else in the app clears a balance. Your entries aren't touched; only the over/under count restarts, and weeks before the line show in History → Weeks as `settled`, with their hours but no verdict.
+
+### What the Months view is for
+
+Months are **descriptive only**: hours logged, days worked, and an average per week. No target, no balance, no over/under colouring.
+
+That's deliberate. Any monthly target would be an artifact of how the weeks happen to fall rather than something your contract says, and inventing one invites a comparison that doesn't mean anything. The over/under signal lives on the weekly scale, where the contract actually is; Months just answers "how much did I work in August".
+
+Two consequences worth knowing. A month here is the **plain calendar month** a day falls in, so a week straddling the boundary has its days split between two months — the weekly and monthly totals for a period can differ, by design. And the average per week for the month in progress is divided by the days that have actually elapsed, not the whole month, so a good first week doesn't read as a terrible month until the 30th.
 
 ### How durations are shown
 
@@ -159,7 +189,7 @@ A running shift is reported as `{ date, note, running, elapsedMs, startedAt }`. 
 | POST   | `/api/entries`    | `{ date, hours, note? }`                   |
 | PATCH  | `/api/entries/:id`| `{ date?, hours?, note? }` — omitted fields keep their current value |
 | DELETE | `/api/entries/:id`| —                                          |
-| PUT    | `/api/settings`   | `{ weeklyTarget?, weekStart? }`            |
+| PUT    | `/api/settings`   | `{ weeklyTarget?, weekStart?, balanceAnchor? }` |
 | POST   | `/api/import`     | `{ entries: [...], settings?: {...} }`     |
 | POST   | `/api/clear`      | — (erases all entries)                     |
 | GET    | `/api/export`     | — (downloads a full JSON backup)           |
@@ -170,6 +200,8 @@ A running shift is reported as `{ date, note, running, elapsedMs, startedAt }`. 
 | POST   | `/api/shift/end`  | — (creates an entry from the elapsed time)  |
 | POST   | `/api/shift/cancel`| — (discards without logging)               |
 
+`balanceAnchor` is a `YYYY-MM-DD` week start, or `""` for "never settled". Settings are applied field by field — anything omitted or malformed keeps its current value, so a partial save can't clear a setting by accident.
+
 ## Publishing to Docker Hub
 
 Local builds are single-architecture — building on an Intel/AMD machine produces an amd64-only image, which fails to start on a Raspberry Pi, a Synology, or an Apple Silicon Mac. Since that's a lot of the audience for a self-hosted tool, publish multi-arch:
@@ -178,7 +210,7 @@ Local builds are single-architecture — building on an Intel/AMD machine produc
 docker login
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t icoumou/clocker:1.4.0 \
+  -t icoumou/clocker:1.5.0 \
   -t icoumou/clocker:latest \
   --push .
 ```
@@ -280,6 +312,7 @@ Fine for a five-minute look; use the one-liner or Compose for anything you keep.
 
 ## Changelog
 
+- **1.5.0** — **Running balance**: hours now carry between weeks. Go over one week and the next week's goal drops by the surplus; come up short and it rises. The balance runs on indefinitely — the header shows where you stand, and **Contract & data → Settle up** clears it when you decide the slate is clean. The history panel toggles between **Weeks** (each week against the goal it was held to, plus the balance) and **Months** (hours logged, days worked, average per week — descriptive only, no target). The overtime chime now fires at the adjusted goal.
 - **1.4.0** — **Overtime chime**: while a shift runs, a line under the clock projects what the week's total will be once it's logged, and a chime sounds the moment that projection crosses your weekly target. Toggle it in Contract & data (a per-device preference).
 - **1.3.0** — **Merge import**: bring a second machine's hours home without losing what's already here. Contract & data now offers Import (replace) and Import (merge) — merge adds the backup's entries and skips any already present (matched by entry id), so it's safe to repeat and won't touch your target or week-start. A version footer at the bottom of the page links to the source and image.
 - **1.2.1** — Durations are stored as whole minutes rather than on a finer grid, fixing weekly totals that drifted when an entry was edited (a one-minute edit could move a total by two). Existing entries are rounded to the nearest minute on first start after upgrading. The CSV export gains an exact `minutes` column, between `hours` and `note`.

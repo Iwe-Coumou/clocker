@@ -297,6 +297,33 @@ test('merge does not overwrite the target settings; replace does', async () => {
   assert.equal(state.settings.weeklyTarget, 12, 'replace adopts the backup target');
 });
 
+test('the balance anchor round-trips and rejects junk', async () => {
+  // "Settle up" writes this; it's the only thing standing between the user and
+  // a balance they deliberately cleared coming back.
+  let state = await api('/api/settings', {
+    method: 'PUT', body: JSON.stringify({ balanceAnchor: '2026-08-03' })
+  });
+  assert.equal(state.settings.balanceAnchor, '2026-08-03');
+
+  // A later settings save that doesn't mention the anchor must not clear it.
+  state = await api('/api/settings', {
+    method: 'PUT', body: JSON.stringify({ weeklyTarget: 8, weekStart: 1 })
+  });
+  assert.equal(state.settings.balanceAnchor, '2026-08-03', 'an unrelated save leaves it alone');
+
+  // Nor may a malformed one overwrite a good one.
+  state = await api('/api/settings', {
+    method: 'PUT', body: JSON.stringify({ balanceAnchor: 'last tuesday' })
+  });
+  assert.equal(state.settings.balanceAnchor, '2026-08-03', 'junk is rejected, not stored');
+
+  // Empty is a real value: it means never settled.
+  state = await api('/api/settings', {
+    method: 'PUT', body: JSON.stringify({ balanceAnchor: '' })
+  });
+  assert.equal(state.settings.balanceAnchor, '');
+});
+
 test('the running version is reported to the client', async () => {
   const state = await api('/api/state');
   assert.match(state.version, /^\d+\.\d+\.\d+$/, 'a semver string for the footer');

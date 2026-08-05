@@ -24,9 +24,13 @@ const APP_VERSION = (() => {
 // loadState. The old file is never deleted; it stays as a rollback.
 const LEGACY_DATA_FILE = path.join(path.dirname(DATA_FILE), 'timecard.json');
 
+// balanceAnchor is the week start (YYYY-MM-DD) the running over/under balance
+// counts from — set by "Settle up", empty until the user ever presses it. It's
+// a stored setting rather than a derived value because forgiving a balance is a
+// decision, and the app must not quietly re-derive one the user cleared.
 const DEFAULT_STATE = {
   entries: [],
-  settings: { weeklyTarget: 8, weekStart: 1 },
+  settings: { weeklyTarget: 8, weekStart: 1, balanceAnchor: '' },
   activeShift: null
 };
 
@@ -356,11 +360,25 @@ app.post('/api/shift/cancel', async (req, res) => {
   res.json(publicState());
 });
 
-app.put('/api/settings', async (req, res) => {
-  const target = Number(req.body && req.body.weeklyTarget);
-  const weekStart = Number(req.body && req.body.weekStart);
+// Shared by the settings endpoint and a replace-import, so a backup can't carry
+// in a setting the live endpoint would have rejected. Each field is applied only
+// if present and valid, leaving the rest untouched.
+function applySettings(source) {
+  if (!source || typeof source !== 'object') return;
+  const target = Number(source.weeklyTarget);
+  const weekStart = Number(source.weekStart);
   if (Number.isFinite(target) && target > 0) state.settings.weeklyTarget = target;
   if (weekStart === 0 || weekStart === 1) state.settings.weekStart = weekStart;
+  // Empty is meaningful: it's "never settled", which un-forgives the balance
+  // and counts from the first logged week again.
+  if (typeof source.balanceAnchor === 'string' &&
+      (source.balanceAnchor === '' || /^\d{4}-\d{2}-\d{2}$/.test(source.balanceAnchor))) {
+    state.settings.balanceAnchor = source.balanceAnchor;
+  }
+}
+
+app.put('/api/settings', async (req, res) => {
+  applySettings(req.body);
   await persist();
   res.json(publicState());
 });
@@ -423,12 +441,7 @@ app.post('/api/import', async (req, res) => {
   // A merge is additive by nature: it shouldn't quietly reset the target or
   // week-start on the machine it's merged into. Only a replace adopts the
   // backup's settings.
-  if (!merge && body.settings) {
-    const target = Number(body.settings.weeklyTarget);
-    const weekStart = Number(body.settings.weekStart);
-    if (Number.isFinite(target) && target > 0) state.settings.weeklyTarget = target;
-    if (weekStart === 0 || weekStart === 1) state.settings.weekStart = weekStart;
-  }
+  if (!merge && body.settings) applySettings(body.settings);
   await persist();
   // The extra `imported` field lets the client report what a merge did; the
   // client's applyState ignores it, so replace callers are unaffected.

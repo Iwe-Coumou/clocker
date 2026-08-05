@@ -1,6 +1,6 @@
 # Clocker
 
-A small, self-hosted time tracker for logging hours against a weekly target (default 8h/week). Start a live shift stopwatch or type entries by hand, and see your week's progress, days logged, and a history of past weeks. Data is stored server-side in a JSON file, so it's shared across every browser and device pointing at the server — not trapped in one browser's local storage.
+A small, self-hosted time tracker for logging hours against a weekly target (default 8h/week). Start a live shift stopwatch or type entries by hand, and see your week's progress, days logged, and a history of past weeks and months. Hours carry between weeks: go over one week and the next week's goal drops to match, so being ahead or behind is one running number you can settle when you choose. Data is stored server-side in a JSON file, so it's shared across every browser and device pointing at the server — not trapped in one browser's local storage.
 
 Tiny Node/Express app, no database, no external services.
 
@@ -81,10 +81,11 @@ The app always listens on port **3000** inside the container; map it to whatever
 ## Tags
 
 - `latest` — the newest release. Convenient, but it moves under you without warning; pin a version for anything you rely on.
-- `1.4.0`, `1.3.0`, … — specific releases. Multi-arch: `linux/amd64` and `linux/arm64` (works on a Raspberry Pi, Synology, or Apple Silicon).
+- `1.5.0`, `1.4.0`, … — specific releases. Multi-arch: `linux/amd64` and `linux/arm64` (works on a Raspberry Pi, Synology, or Apple Silicon).
 
 ## Changelog
 
+- **1.5.0** — Running balance: a week that runs over lowers the next week's goal by the surplus, and a short week raises it. The balance carries on indefinitely, with a "Settle up" button to clear it when you decide. History toggles between weeks (each against the goal it was held to) and months (hours logged, days worked, average per week — descriptive only).
 - **1.4.0** — Overtime chime: a running shift projects the week's total live and chimes when it crosses your weekly target (toggle in Contract & data).
 - **1.3.0** — Merge import: add another machine's exported hours to an existing install without replacing anything (entries already present are skipped). A version footer links back to the source and this page.
 - **1.2.1** — Durations are now stored as whole minutes, fixing weekly totals that drifted when an entry was edited (a one-minute edit could move a total by two). Entries from older versions are rounded to the nearest minute on first start. CSV export gains an exact `minutes` column.
