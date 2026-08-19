@@ -856,23 +856,112 @@
     document.getElementById('historySummary').hidden = true;
     if (historyView === 'month') renderMonthHistory(byDay);
     else renderWeekHistory(byDay);
+    syncDetailsToggle();
   }
 
-  // One bar per period, scaled against the tallest thing on show \u2014 the totals
-  // and the goals both, so a bar that falls short of its goal looks short.
+  // How a finished period compares to the goal it was held to. Under is the
+  // costly direction — hours owed that were never worked — so it gets the alarm
+  // colour; over is hours banked, worth noting but not a problem. A period
+  // still running isn't judged at all: a Tuesday is always "under".
+  function verdictClass(total, goal, isCurrent){
+    if (goal === null) return 'is-neutral'; // months make no claim either way
+    if (isCurrent) return 'is-current';
+    if (total > goal) return 'is-over';
+    if (total < goal) return 'is-under';
+    return 'is-met';
+  }
+
+  // Round the axis up to a whole number of steps so the top gridline is the top
+  // of the plot, and pick a step that yields roughly four lines.
+  function axisScale(maxVal){
+    const steps = [0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 40, 80];
+    const step = steps.find((s) => s >= maxVal / 4) || steps[steps.length - 1];
+    return { step, max: Math.max(step, Math.ceil(maxVal / step) * step) };
+  }
+
+  // One bar per period against a labelled axis, with each period's goal drawn
+  // across its own bar. The goal moves from week to week, so a single line
+  // across the whole chart would misreport every week but one.
   function drawHistoryBars(rows){
     const chart = document.getElementById('historyChart');
-    const maxVal = Math.max(1, ...rows.map((r) => Math.max(r.total, r.goal)));
+    const peak = Math.max(1, ...rows.map((r) => Math.max(r.total, r.goal === null ? 0 : r.goal)));
+    const { step, max } = axisScale(peak);
+
+    const scale = document.createElement('div');
+    scale.className = 'chart-scale';
+    for (let v = 0; v <= max + 1e-9; v += step){
+      const line = document.createElement('div');
+      line.className = 'scale-line' + (v === 0 ? ' is-base' : '');
+      line.style.bottom = (v / max) * 100 + '%';
+      line.innerHTML = `<span>${fmtHM(v)}</span>`;
+      scale.appendChild(line);
+    }
+    chart.appendChild(scale);
+
+    const cols = document.createElement('div');
+    cols.className = 'chart-cols';
     for (const r of rows.slice().reverse()){ // oldest -> newest, left to right
-      const pct = Math.max(2, (r.total / maxVal) * 100);
-      const cls = r.total > r.goal ? 'is-over' : (r.isCurrent ? 'is-current' : '');
+      const pct = r.total > 0 ? Math.max(1.5, (r.total / max) * 100) : 0;
       const col = document.createElement('div');
       col.className = 'hbar-col';
+
+      const goalMark = r.goal === null || r.goal <= 0
+        ? ''
+        : `<div class="hbar-goal" style="bottom:${Math.min(100, (r.goal / max) * 100)}%"></div>`;
+      // The bar itself carries the numbers for anyone hovering, which is also
+      // where a screen reader picks them up.
+      const tip = r.goal === null
+        ? `${r.label}: ${fmtHM(r.total)}`
+        : `${r.label}: ${fmtHM(r.total)} of ${fmtHM(r.goal)}`;
+
       col.innerHTML = `
-        <div class="hbar-track"><div class="hbar ${cls}" style="height:${pct}%"></div></div>
+        <div class="hbar-track" title="${escapeHtml(tip)}">
+          <div class="hbar ${verdictClass(r.total, r.goal, r.isCurrent)}" style="height:${pct}%"></div>
+          ${goalMark}
+        </div>
+        <div class="hbar-value">${r.total > 0 ? fmtHM(r.total) : ''}</div>
         <div class="hbar-label">${r.label}</div>`;
-      chart.appendChild(col);
+      cols.appendChild(col);
     }
+    chart.appendChild(cols);
+  }
+
+  // Only the keys actually on the chart, so the month view doesn't advertise a
+  // verdict it never renders.
+  function drawChartLegend(withGoals){
+    const legend = document.getElementById('chartLegend');
+    if (!withGoals){
+      legend.hidden = true;
+      return;
+    }
+    legend.hidden = false;
+    legend.innerHTML = [
+      ['is-under', 'under goal'],
+      ['is-over', 'over goal'],
+      ['is-met', 'exactly met'],
+      ['is-current', 'in progress']
+    ].map(([cls, text]) => `<span class="legend-item"><span class="legend-swatch ${cls}"></span>${text}</span>`)
+      .join('') +
+      '<span class="legend-item"><span class="legend-goal"></span>goal</span>';
+  }
+
+  // The table under the chart is a drill-down, not the headline — the chart
+  // and the balance line carry the story. Collapsing it is remembered per
+  // device, the same way the chime preference is.
+  const DETAILS_KEY = 'clocker.historyDetails';
+  let historyDetailsOpen = localStorage.getItem(DETAILS_KEY) !== '0'; // default open
+
+  function syncDetailsToggle(){
+    const btn = document.getElementById('historyDetailsToggle');
+    const table = document.getElementById('historyTable');
+    const rows = table.children.length;
+    const noun = historyView === 'month' ? 'month' : 'week';
+    document.getElementById('historyDetailsLabel').textContent =
+      noun.charAt(0).toUpperCase() + noun.slice(1) + ' details';
+    document.getElementById('historyDetailsCount').textContent =
+      rows ? `${rows} ${noun}${rows === 1 ? '' : 's'}` : '';
+    btn.setAttribute('aria-expanded', String(historyDetailsOpen));
+    table.hidden = !historyDetailsOpen;
   }
 
   function histRow(rangeHtml, valueHtml, totalClass){
@@ -920,13 +1009,15 @@
       };
     });
 
-    // A settled week has no goal to fall short of, so it is never drawn "over".
+    // A settled week has no goal left to be measured against, so it is drawn
+    // as a plain neutral bar rather than being judged against a revived one.
     drawHistoryBars(weeks.map((w) => ({
       total: w.total,
-      goal: w.goal === null ? w.total : w.goal,
+      goal: w.goal,
       isCurrent: w.isCurrent,
       label: w.label
     })));
+    drawChartLegend(true);
 
     const table = document.getElementById('historyTable');
     for (const w of weeks){
@@ -954,7 +1045,7 @@
           (shifted ? ' <span class="hist-flag">adjusted</span>' : ''),
         `${fmtHM(w.total)}<span class="hist-goal"> / ${fmtHM(w.goal)}</span>` +
           (diff !== 0 ? ` <span class="hist-diff">(${fmtHMSigned(diff)})</span>` : ''),
-        diff > 0 ? 'is-over' : (diff === 0 && w.total > 0 ? 'is-met' : '')
+        verdictClass(w.total, w.goal, w.isCurrent)
       ));
     }
 
@@ -990,12 +1081,13 @@
 
     drawHistoryBars(months.map((m) => ({
       total: m.total,
-      goal: 0, // nothing to fall short of, so no month bar is ever "over"
+      goal: null, // months assert nothing, so no goal marker and no verdict
       isCurrent: m.monthKey === currentKey,
       // The year only earns a place on the label once the bar isn't from it.
       label: MONTH_SHORT[Number(m.monthKey.slice(5, 7)) - 1] +
         (m.monthKey.slice(0, 4) === currentYear ? '' : ` '${m.monthKey.slice(2, 4)}`)
     })));
+    drawChartLegend(false);
 
     const table = document.getElementById('historyTable');
     for (const m of months){
@@ -1142,6 +1234,12 @@
   wireToggle('historyToggle', (value) => {
     historyView = value;
     renderHistory(entriesByDay());
+  });
+
+  document.getElementById('historyDetailsToggle').addEventListener('click', () => {
+    historyDetailsOpen = !historyDetailsOpen;
+    localStorage.setItem(DETAILS_KEY, historyDetailsOpen ? '1' : '0');
+    syncDetailsToggle();
   });
 
   // ---------- Settings dialog ----------

@@ -239,11 +239,11 @@ button, input, select{ font-family:inherit; color:inherit; }
   font-weight:600;
 }
 .shift-projection.is-over{
-  color:var(--rust);
-  border-color:rgba(192,82,74,0.5);
-  background:rgba(192,82,74,0.08);
+  color:var(--brass-bright);
+  border-color:rgba(224,181,89,0.5);
+  background:rgba(224,181,89,0.08);
 }
-.shift-projection.is-over strong{ color:var(--rust); }
+.shift-projection.is-over strong{ color:var(--brass-bright); }
 
 .shift-note-input{
   width:100%;
@@ -630,40 +630,103 @@ input:focus-visible, select:focus-visible, button:focus-visible{
 
 /* ---------- History ---------- */
 
+/* The plot is a fixed-height band with the scale drawn behind it, so the
+   gridlines, the bars and the per-bar goal markers all share one coordinate
+   space and a value can be read off the axis. --track is that band's height;
+   everything positioned by percentage is a percentage of it. */
 .history-chart{
+  --track:132px;
+  position:relative;
+  padding:0 2px 12px 42px;
+  margin-bottom:6px;
+}
+
+.chart-scale{
+  position:absolute;
+  left:42px;
+  right:2px;
+  top:0;
+  height:var(--track);
+  pointer-events:none;
+}
+
+.scale-line{
+  position:absolute;
+  left:0;
+  right:0;
+  border-top:1px dashed rgba(236,231,219,0.10);
+}
+.scale-line span{
+  position:absolute;
+  right:calc(100% + 8px);
+  top:-0.65em;
+  font-family:var(--font-mono);
+  font-size:9.5px;
+  color:var(--paper-dim);
+  opacity:0.75;
+  white-space:nowrap;
+}
+/* The baseline is the one line that should read as solid ground. */
+.scale-line.is-base{ border-top:1px solid var(--line); }
+
+.chart-cols{
+  position:relative;
   display:flex;
   align-items:flex-end;
   gap:8px;
-  padding:0 2px 12px;
-  border-bottom:1px solid var(--line);
-  margin-bottom:14px;
 }
 
 .hbar-col{
   flex:1;
+  min-width:0;
   display:flex;
   flex-direction:column;
   align-items:center;
-  gap:6px;
+  gap:5px;
 }
 
 .hbar-track{
+  position:relative;
   width:100%;
-  height:96px;
+  height:var(--track);
   display:flex;
   align-items:flex-end;
   justify-content:center;
 }
 
 .hbar{
-  width:60%;
-  min-width:10px;
-  border-radius:4px 4px 0 0;
-  background:var(--teal);
+  width:62%;
+  min-width:8px;
+  border-radius:3px 3px 0 0;
+  background:var(--brass);
   transition:height 0.3s ease;
 }
-.hbar.is-over{ background:var(--rust); }
-.hbar.is-current{ background:var(--brass); }
+/* Short of the goal: the hours are owed. Past it: banked, worth noting only. */
+.hbar.is-under{ background:var(--rust); }
+.hbar.is-over{ background:var(--brass-bright); }
+.hbar.is-met{ background:var(--teal); }
+.hbar.is-neutral{ background:var(--brass); opacity:0.8; }
+/* Still running, so not yet judged either way. */
+.hbar.is-current{ background:var(--brass); opacity:0.55; }
+
+/* Where the week's goal sat, drawn across its own bar because the goal moves
+   from week to week — a single line across the whole chart would be a lie. */
+.hbar-goal{
+  position:absolute;
+  left:8%;
+  right:8%;
+  height:0;
+  border-top:2px dotted var(--paper);
+  opacity:0.75;
+}
+
+.hbar-value{
+  font-family:var(--font-mono);
+  font-size:9.5px;
+  color:var(--paper);
+  opacity:0.85;
+  white-space:nowrap;
+}
 
 .hbar-label{
   font-family:var(--font-mono);
@@ -671,6 +734,64 @@ input:focus-visible, select:focus-visible, button:focus-visible{
   color:var(--paper-dim);
   white-space:nowrap;
 }
+
+/* Legend + collapsible details header */
+.chart-legend{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px 14px;
+  padding:0 2px 12px 42px;
+  border-bottom:1px solid var(--line);
+  margin-bottom:4px;
+  font-size:11px;
+  color:var(--paper-dim);
+}
+.chart-legend[hidden]{ display:none; }
+.legend-item{ display:inline-flex; align-items:center; gap:5px; }
+.legend-swatch{
+  width:9px;
+  height:9px;
+  border-radius:2px;
+  flex-shrink:0;
+}
+.legend-swatch.is-under{ background:var(--rust); }
+.legend-swatch.is-over{ background:var(--brass-bright); }
+.legend-swatch.is-met{ background:var(--teal); }
+.legend-swatch.is-current{ background:var(--brass); opacity:0.55; }
+.legend-goal{
+  width:12px;
+  height:0;
+  border-top:2px dotted var(--paper);
+  opacity:0.75;
+  flex-shrink:0;
+}
+
+.details-toggle{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  width:100%;
+  background:transparent;
+  border:none;
+  color:var(--paper-dim);
+  font-family:inherit;
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:0.07em;
+  padding:10px 2px;
+  cursor:pointer;
+  text-align:left;
+}
+.details-toggle:hover{ color:var(--paper); }
+.details-caret{
+  display:inline-block;
+  font-size:9px;
+  transition:transform 0.15s;
+}
+.details-toggle[aria-expanded="true"] .details-caret{ transform:rotate(90deg); }
+.details-count{ margin-left:auto; opacity:0.7; letter-spacing:0; }
+
+.history-table[hidden]{ display:none; }
 
 .history-table{ display:flex; flex-direction:column; gap:1px; }
 
@@ -711,12 +832,17 @@ input:focus-visible, select:focus-visible, button:focus-visible{
   font-weight:600;
   white-space:nowrap;
 }
-.hist-total.is-over{ color:var(--rust); }
+.hist-total.is-over{ color:var(--brass-bright); }
 .hist-total.is-met{ color:var(--teal); }
-/* Under contract — worth flagging, but it isn't the alarm that overtime is. */
-.hist-total.is-under{ color:var(--brass-bright); }
+/* Under contract is the one that costs you: hours owed that nobody paid for.
+   Overtime is worth flagging, but it's hours banked, not hours lost — so red
+   marks the shortfall and amber the excess, not the other way round. */
+.hist-total.is-under{ color:var(--rust); }
 /* A week from before the settle point: kept for the record, no longer judged. */
 .hist-total.is-settled{ color:var(--paper-dim); font-weight:400; }
+/* Still running. A Tuesday is always short of its goal, so calling it under
+   would cry wolf every week — it stays uncoloured until the week is done. */
+.hist-total.is-current{ opacity:0.75; }
 
 .hist-goal{ color:var(--paper-dim); font-weight:400; }
 .hist-diff{ opacity:0.7; font-weight:400; }
@@ -729,8 +855,8 @@ input:focus-visible, select:focus-visible, button:focus-visible{
   color:var(--paper-dim);
 }
 .hist-summary strong{ font-family:var(--font-mono); }
-.hist-summary .is-over{ color:var(--rust); }
-.hist-summary .is-under{ color:var(--brass-bright); }
+.hist-summary .is-over{ color:var(--brass-bright); }
+.hist-summary .is-under{ color:var(--rust); }
 .hist-summary .is-met{ color:var(--teal); }
 
 /* ---------- Dialog ---------- */
@@ -799,8 +925,8 @@ input:focus-visible, select:focus-visible, button:focus-visible{
   font-size:17px;
   font-weight:600;
 }
-.settle-value.is-over{ color:var(--rust); }
-.settle-value.is-under{ color:var(--brass-bright); }
+.settle-value.is-over{ color:var(--brass-bright); }
+.settle-value.is-under{ color:var(--rust); }
 
 .settle-since{ font-size:11.5px; color:var(--paper-dim); }
 
@@ -862,6 +988,15 @@ input:focus-visible, select:focus-visible, button:focus-visible{
 }
 
 @media (max-width:520px){
+  /* Eight bars across a phone leaves ~28px each: the axis still reads, but a
+     value on top of every bar does not, so the tooltip carries them instead. */
+  .history-chart{ --track:104px; padding-left:34px; }
+  .chart-scale{ left:34px; }
+  .chart-legend{ padding-left:34px; }
+  .hbar-value{ display:none; }
+  .hbar-label{ font-size:9px; }
+  .chart-cols{ gap:5px; }
+
   .entry-form{ grid-template-columns:1fr; }
   .hero-meta{ grid-template-columns:1fr; gap:10px; }
   .punch-block{ gap:16px; }

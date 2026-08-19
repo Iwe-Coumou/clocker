@@ -95,7 +95,7 @@ This is fine for personal use behind Tailscale/your LAN. If you ever expose the 
 - **Log time**: pick a date, enter hours/minutes (or use the quick +15m/+30m/+1h/+2h chips to log against today instantly), optionally add a note, and add the entry. Multiple sessions on the same date are stored separately but summed automatically wherever a daily total is shown. The date field defaults to today but isn't locked — pick any past date to backfill a missed day.
 - **This week's punch**: the header shows total hours logged this week against this week's goal, with hours remaining (or over), plus your running balance. When the goal has been moved by that balance, a line underneath says so — e.g. `8:00 contracted · 4:00 already banked ahead`.
 - **Day ledger**: browse days with logged time, expand a day to see individual sessions. Sessions that came from the stopwatch also show when they ran and how long they were paused — e.g. `09:15 – 12:40 · paused 0:25`. Entries typed into the form have no measured span, so that line is simply absent rather than faked. Each session has an edit (✎) and delete (✕) button — editing opens the duration, date and note inline, so a mistyped entry or a stopwatch left running too long can be corrected without deleting and re-adding it. Changing the date moves the entry to that day (and drops the recorded times, since they'd then contradict the date beside them). Toggle between "This week" and "All time".
-- **History**: a small bar chart plus a table, toggling between **Weeks** and **Months**. **Weeks** is the view that judges: each week's total against the goal it was actually held to, an `adjusted` badge on any week whose goal was moved by the carry, and the running balance underneath. **Months** makes no claim about over or under — no target, no colouring — just hours logged, days worked, and an average per week. See "The running balance" below.
+- **History**: a bar chart plus a collapsible table, toggling between **Weeks** and **Months**. **Weeks** is the view that judges: each bar is drawn against a labelled hour axis with that week's goal marked across it as a dotted line, so you can see at a glance whether the week cleared its bar. Rows show the total against the goal it was actually held to, with an `adjusted` badge on any week whose goal was moved by the carry, and the running balance underneath. **Months** makes no claim about over or under — no goal markers, no colouring — just hours logged, days worked, and an average per week. See "The running balance" below.
 - **Contract & data** (top-right button): change your weekly hour target or which day the week starts on, settle the running balance, export a JSON backup, import a backup, export a CSV sheet, or erase everything.
 
 Two export formats, for two different jobs: **Export backup (.json)** is the one the import buttons read back, so use it to move or restore data. **Export sheet (.csv)** is a flat `date, hours, minutes, note, started_at, ended_at, paused_minutes, logged_at` table for a spreadsheet or an invoice — it can't be imported.
@@ -121,6 +121,17 @@ A worked example, 8h/week:
 Week 2's goal is zero because week 1 already covered it; the surplus a zero can't absorb rolls on to week 3. Week 5 asks for 14:00 because weeks 4 and 5 both came up short.
 
 The live shift measures against the **adjusted** goal too, so on a week trimmed to 4:00 the overtime chime sounds at the fourth hour, not the eighth.
+
+**Reading the colours.** A finished week is coloured by which side of its goal it landed on:
+
+| | Meaning |
+|---|---|
+| **Red** | Under the goal — hours owed that were never worked |
+| **Amber** | Over the goal — hours banked, carried into next week |
+| **Teal** | Exactly on the goal |
+| **Neutral** | The current week, still running, or a settled one |
+
+Under is the alarm colour rather than over, because under is the direction that costs you: overtime is hours in the bank that lower next week's goal, while a shortfall is work still outstanding. The week in progress is deliberately left uncoloured — a Tuesday is always short of its goal, and flagging that every week would just be noise.
 
 **Settling up.** A balance that carries forever will, after a long enough gap, ask for a week you're never going to work. **Contract & data → Settle up** draws a line under everything up to the current week and starts the count from level. It's deliberate and confirmed, never automatic — nothing else in the app clears a balance. Your entries aren't touched; only the over/under count restarts, and weeks before the line show in History → Weeks as `settled`, with their hours but no verdict.
 
@@ -210,7 +221,7 @@ Local builds are single-architecture — building on an Intel/AMD machine produc
 docker login
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t icoumou/clocker:1.5.0 \
+  -t icoumou/clocker:1.6.0 \
   -t icoumou/clocker:latest \
   --push .
 ```
@@ -230,7 +241,7 @@ docker run -d --name clocker \
   -p 8090:3000 \
   -v clocker-data:/data \
   --restart unless-stopped \
-  icoumou/clocker:1.4.0
+  icoumou/clocker:1.6.0
 ```
 
 Then open **http://localhost:8090**. The `clocker-data` volume is created for you on that first run — there's nothing to set up beforehand.
@@ -258,7 +269,7 @@ docker run -d --name clocker \
   -v clocker-data:/data \
   -e AUTH_USER=yourname -e AUTH_PASS=something-not-guessable \
   --restart unless-stopped \
-  icoumou/clocker:1.4.0
+  icoumou/clocker:1.6.0
 ```
 
 Omit both `-e` flags to run with no login. Environment variables are fixed when the container is created, so changing them later means `docker rm -f clocker` and running it again — safe, since the data is in the volume rather than the container.
@@ -272,7 +283,7 @@ Same thing, but the file remembers the settings for you — worth it for anythin
 ```yaml
 services:
   clocker:
-    image: icoumou/clocker:1.4.0
+    image: icoumou/clocker:1.6.0
     container_name: clocker
     ports:
       # Host side only — change 8090 if it's taken. The app always listens on
@@ -312,6 +323,7 @@ Fine for a five-minute look; use the one-liner or Compose for anything you keep.
 
 ## Changelog
 
+- **1.6.0** — **A history chart you can read**: bars are drawn against a labelled hour axis with each week's goal marked across its own bar, so you can see at a glance whether a week cleared it. **Under the goal is now red and over is amber** — a shortfall is hours owed, overtime is hours banked, and the old colours had that backwards. The week in progress stays uncoloured, since a Tuesday is always short of its goal. The detail table under the chart collapses, and remembers the choice per device.
 - **1.5.0** — **Running balance**: hours now carry between weeks. Go over one week and the next week's goal drops by the surplus; come up short and it rises. The balance runs on indefinitely — the header shows where you stand, and **Contract & data → Settle up** clears it when you decide the slate is clean. The history panel toggles between **Weeks** (each week against the goal it was held to, plus the balance) and **Months** (hours logged, days worked, average per week — descriptive only, no target). The overtime chime now fires at the adjusted goal.
 - **1.4.0** — **Overtime chime**: while a shift runs, a line under the clock projects what the week's total will be once it's logged, and a chime sounds the moment that projection crosses your weekly target. Toggle it in Contract & data (a per-device preference).
 - **1.3.0** — **Merge import**: bring a second machine's hours home without losing what's already here. Contract & data now offers Import (replace) and Import (merge) — merge adds the backup's entries and skips any already present (matched by entry id), so it's safe to repeat and won't touch your target or week-start. A version footer at the bottom of the page links to the source and image.
