@@ -36,7 +36,7 @@
     if (reconnectTimer) return; // already polling
     reconnectTimer = setInterval(async () => {
       try{
-        const state = await apiCall('/api/state');
+        const state = await apiCall('api/state');
         applyState(state); // sets connected true, which clears this interval
         renderAll();
       }catch(e){
@@ -84,7 +84,7 @@
   async function loadState(retries = 5, gapMs = 700){
     for (let attempt = 0; attempt < retries; attempt++){
       try{
-        const state = await apiCall('/api/state');
+        const state = await apiCall('api/state');
         applyState(state);
         return;
       }catch(e){
@@ -353,7 +353,7 @@
 
   async function addEntry(dateStr, hours, note){
     try{
-      const state = await apiCall('/api/entries', {
+      const state = await apiCall('api/entries', {
         method: 'POST',
         body: JSON.stringify({ date: dateStr, hours, note: note || '' })
       });
@@ -367,7 +367,7 @@
 
   async function updateEntry(id, fields){
     try{
-      const state = await apiCall('/api/entries/' + encodeURIComponent(id), {
+      const state = await apiCall('api/entries/' + encodeURIComponent(id), {
         method: 'PATCH',
         body: JSON.stringify(fields)
       });
@@ -385,7 +385,7 @@
 
   async function deleteEntry(id){
     try{
-      const state = await apiCall('/api/entries/' + encodeURIComponent(id), { method: 'DELETE' });
+      const state = await apiCall('api/entries/' + encodeURIComponent(id), { method: 'DELETE' });
       applyState(state);
       renderAll();
     }catch(e){
@@ -1162,7 +1162,7 @@
     resumeAudio(); // unlock the chime while we have the click gesture
     const note = shiftNoteInput.value.trim();
     try{
-      const state = await apiCall('/api/shift/start', {
+      const state = await apiCall('api/shift/start', {
         method: 'POST',
         body: JSON.stringify({ date: todayStr(), note })
       });
@@ -1174,7 +1174,7 @@
 
   document.getElementById('shiftPauseBtn').addEventListener('click', async () => {
     try{
-      const state = await apiCall('/api/shift/pause', { method: 'POST' });
+      const state = await apiCall('api/shift/pause', { method: 'POST' });
       applyState(state);
     }catch(e){
       window.alert('Could not pause: ' + e.message);
@@ -1184,7 +1184,7 @@
   document.getElementById('shiftResumeBtn').addEventListener('click', async () => {
     resumeAudio();
     try{
-      const state = await apiCall('/api/shift/resume', { method: 'POST' });
+      const state = await apiCall('api/shift/resume', { method: 'POST' });
       applyState(state);
     }catch(e){
       window.alert('Could not resume: ' + e.message);
@@ -1193,7 +1193,7 @@
 
   document.getElementById('shiftEndBtn').addEventListener('click', async () => {
     try{
-      const state = await apiCall('/api/shift/end', { method: 'POST' });
+      const state = await apiCall('api/shift/end', { method: 'POST' });
       applyState(state);
       shiftNoteInput.value = '';
       renderAll(); // new entry needs to show up in the ledger/history/week total
@@ -1206,7 +1206,7 @@
     const proceed = window.confirm('Discard this shift without logging any time?');
     if (!proceed) return;
     try{
-      const state = await apiCall('/api/shift/cancel', { method: 'POST' });
+      const state = await apiCall('api/shift/cancel', { method: 'POST' });
       applyState(state);
       shiftNoteInput.value = '';
     }catch(e){
@@ -1285,7 +1285,7 @@
     );
     if (!proceed) return;
     try{
-      const state = await apiCall('/api/settings', {
+      const state = await apiCall('api/settings', {
         method: 'PUT',
         body: JSON.stringify({ balanceAnchor: toDateStr(startOfWeek(todayStr())) })
       });
@@ -1317,7 +1317,7 @@
     const weeklyTarget = (!isNaN(t) && t > 0) ? t : settings.weeklyTarget;
     const weekStart = parseInt(weekStartInput.value, 10) === 0 ? 0 : 1;
     try{
-      const state = await apiCall('/api/settings', {
+      const state = await apiCall('api/settings', {
         method: 'PUT',
         body: JSON.stringify({ weeklyTarget, weekStart })
       });
@@ -1341,11 +1341,11 @@
   }
 
   document.getElementById('exportBtn').addEventListener('click', () => {
-    download('/api/export', `clocker-backup-${todayStr()}.json`);
+    download('api/export', `clocker-backup-${todayStr()}.json`);
   });
 
   document.getElementById('exportCsvBtn').addEventListener('click', () => {
-    download('/api/export.csv', `clocker-${todayStr()}.csv`);
+    download('api/export.csv', `clocker-${todayStr()}.csv`);
   });
 
   // Both import buttons share this; `mode` is 'replace' or 'merge'. Replace
@@ -1364,7 +1364,7 @@
           : `This backup contains ${data.entries.length} entries. Importing will replace all data currently stored on the server. Continue?`
         );
         if (!proceed) return;
-        const state = await apiCall('/api/import', {
+        const state = await apiCall('api/import', {
           method: 'POST',
           body: JSON.stringify({ entries: data.entries, settings: data.settings, mode })
         });
@@ -1392,7 +1392,7 @@
     const proceed = window.confirm('Erase all logged entries on the server? This cannot be undone. Export a backup first if you want to keep a copy.');
     if (!proceed) return;
     try{
-      const state = await apiCall('/api/clear', { method: 'POST' });
+      const state = await apiCall('api/clear', { method: 'POST' });
       applyState(state);
       renderAll();
     }catch(e){

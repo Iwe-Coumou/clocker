@@ -221,7 +221,7 @@ Local builds are single-architecture — building on an Intel/AMD machine produc
 docker login
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t icoumou/clocker:1.6.0 \
+  -t icoumou/clocker:1.7.0 \
   -t icoumou/clocker:latest \
   --push .
 ```
@@ -241,7 +241,7 @@ docker run -d --name clocker \
   -p 8090:3000 \
   -v clocker-data:/data \
   --restart unless-stopped \
-  icoumou/clocker:1.6.0
+  icoumou/clocker:1.7.0
 ```
 
 Then open **http://localhost:8090**. The `clocker-data` volume is created for you on that first run — there's nothing to set up beforehand.
@@ -269,7 +269,7 @@ docker run -d --name clocker \
   -v clocker-data:/data \
   -e AUTH_USER=yourname -e AUTH_PASS=something-not-guessable \
   --restart unless-stopped \
-  icoumou/clocker:1.6.0
+  icoumou/clocker:1.7.0
 ```
 
 Omit both `-e` flags to run with no login. Environment variables are fixed when the container is created, so changing them later means `docker rm -f clocker` and running it again — safe, since the data is in the volume rather than the container.
@@ -283,7 +283,7 @@ Same thing, but the file remembers the settings for you — worth it for anythin
 ```yaml
 services:
   clocker:
-    image: icoumou/clocker:1.6.0
+    image: icoumou/clocker:1.7.0
     container_name: clocker
     ports:
       # Host side only — change 8090 if it's taken. The app always listens on
@@ -323,6 +323,7 @@ Fine for a five-minute look; use the one-liner or Compose for anything you keep.
 
 ## Changelog
 
+- **1.7.0** — **Runs under a subpath**: the page's API calls are now relative instead of absolute, so Clocker works behind a reverse proxy that mounts it at a path — e.g. `tailscale serve --set-path /clocker http://localhost:8090` — rather than only at `/`. Open it with the trailing slash (`/clocker/`), or the browser resolves the page's files against the root.
 - **1.6.0** — **A history chart you can read**: bars are drawn against a labelled hour axis with each week's goal marked across its own bar, so you can see at a glance whether a week cleared it. **Under the goal is now red and over is amber** — a shortfall is hours owed, overtime is hours banked, and the old colours had that backwards. The week in progress stays uncoloured, since a Tuesday is always short of its goal. The detail table under the chart collapses, and remembers the choice per device.
 - **1.5.0** — **Running balance**: hours now carry between weeks. Go over one week and the next week's goal drops by the surplus; come up short and it rises. The balance runs on indefinitely — the header shows where you stand, and **Contract & data → Settle up** clears it when you decide the slate is clean. The history panel toggles between **Weeks** (each week against the goal it was held to, plus the balance) and **Months** (hours logged, days worked, average per week — descriptive only, no target). The overtime chime now fires at the adjusted goal.
 - **1.4.0** — **Overtime chime**: while a shift runs, a line under the clock projects what the week's total will be once it's logged, and a chime sounds the moment that projection crosses your weekly target. Toggle it in Contract & data (a per-device preference).

@@ -81,10 +81,11 @@ The app always listens on port **3000** inside the container; map it to whatever
 ## Tags
 
 - `latest` — the newest release. Convenient, but it moves under you without warning; pin a version for anything you rely on.
-- `1.6.0`, `1.5.0`, … — specific releases. Multi-arch: `linux/amd64` and `linux/arm64` (works on a Raspberry Pi, Synology, or Apple Silicon).
+- `1.7.0`, `1.6.0`, … — specific releases. Multi-arch: `linux/amd64` and `linux/arm64` (works on a Raspberry Pi, Synology, or Apple Silicon).
 
 ## Changelog
 
+- **1.7.0** — Runs under a subpath: the page's API calls are now relative, so Clocker works behind a reverse proxy at e.g. `/clocker/` (open it with the trailing slash), not only at the root.
 - **1.6.0** — History chart gains an hour axis and a per-week goal marker, so a bar can actually be read. Under the goal now shows red and over shows amber (a shortfall is hours owed; overtime is hours banked). The table under the chart is collapsible.
 - **1.5.0** — Running balance: a week that runs over lowers the next week's goal by the surplus, and a short week raises it. The balance carries on indefinitely, with a "Settle up" button to clear it when you decide. History toggles between weeks (each against the goal it was held to) and months (hours logged, days worked, average per week — descriptive only).
 - **1.4.0** — Overtime chime: a running shift projects the week's total live and chimes when it crosses your weekly target (toggle in Contract & data).
